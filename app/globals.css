@@ -100,8 +100,8 @@ button { cursor: pointer; }
 .choice { min-height: 38px; background: #fafaf8; color: #767771; border: 1px solid #e2e2de; padding: 4px; font-weight: bold; border-radius: 4px; }
 .choice small { display: block; font-size: 8px; margin-top: 2px; font-weight: normal; }
 .choice.conforme { border-color: #159365; color: #117c56; background: #edf8f2; }
-.choice.não-conforme { border-color: #d11d1d; color: #c71818; background: #fff1f1; }
-.choice.n/a { border-color: #c8a66a; color: #9c721f; background: #fff9ec; }
+.choice.nao-conforme { border-color: #d11d1d; color: #c71818; background: #fff1f1; }
+.choice.na { border-color: #c8a66a; color: #9c721f; background: #fff9ec; }
 .detailed-issue, .general-notes { grid-column: 1 / -1; display: grid; gap: 8px; margin-top: 8px; padding: 14px; background: #fff7f7; border: 1px solid #f0caca; border-radius: 4px; }
 .detailed-issue strong { font-size: 11px; color: #a51212; }
 .detailed-issue input, .detailed-issue textarea, .general-notes textarea { width: 100%; border: 1px solid #deded9; padding: 9px; font-size: 12px; resize: vertical; border-radius: 4px; }

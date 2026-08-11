@@ -1189,17 +1189,20 @@ function Checklist({
                 <span>{item}</span>
               </div>
               <div className="choice-set">
-                {(["Conforme", "Não conforme", "N/A"] as Status[]).map((status) => (
-                  <button
-                    type="button"
-                    key={status}
-                    onClick={() => setAnswers((current) => ({ ...current, [index]: status }))}
-                    className={`choice ${answers[index] === status ? status.toLowerCase().replace(" ", "-") : ""}`}
-                  >
-                    {status === "Conforme" ? "✓" : status === "Não conforme" ? "!" : "—"}
-                    <small>{status}</small>
-                  </button>
-                ))}
+                {(["Conforme", "Não conforme", "N/A"] as Status[]).map((status) => {
+                  const statusClass = status === "Conforme" ? "conforme" : status === "Não conforme" ? "nao-conforme" : "na";
+                  return (
+                    <button
+                      type="button"
+                      key={status}
+                      onClick={() => setAnswers((current) => ({ ...current, [index]: status }))}
+                      className={`choice ${answers[index] === status ? statusClass : ""}`}
+                    >
+                      {status === "Conforme" ? "✓" : status === "Não conforme" ? "!" : "—"}
+                      <small>{status}</small>
+                    </button>
+                  );
+                })}
               </div>
               {answers[index] === "Não conforme" && (
                 <div className="detailed-issue">
