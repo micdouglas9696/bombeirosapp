@@ -124,6 +124,47 @@ button,input,select { font:inherit; } button { cursor:pointer; } .app-shell { mi
   .checklist-layout { padding-bottom: 70px; }
 }
 
+/* Modal Header Banner for Logo Contrast */
+.modal-header-banner {
+  background: linear-gradient(180deg, #18191c 0%, #0e0f11 100%);
+  border-bottom: 3px solid var(--red);
+  margin: -28px -28px 24px -28px;
+  padding: 22px 24px 18px;
+  border-radius: 6px 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.modal-header-banner .modal-logo-img {
+  height: 44px;
+  width: auto;
+  max-width: 220px;
+  object-fit: contain;
+  margin: 0;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4));
+}
+.modal-header-banner .eyebrow {
+  margin: 8px 0 2px;
+}
+.modal-header-banner h2 {
+  color: #ffffff;
+  font-size: 19px;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .modal-header-banner {
+    margin: -20px -16px 18px -16px;
+    padding: 18px 16px 14px;
+    border-radius: 12px 12px 0 0;
+  }
+  .modal-header-banner .modal-logo-img {
+    height: 38px;
+  }
+}
+
 /* Tablet Optimizations (iPad/Tablets) */
 @media (min-width: 641px) and (max-width: 1024px) {
   .landing-grid { grid-template-columns: 1fr 1fr; gap: 20px; }
@@ -132,6 +173,7 @@ button,input,select { font:inherit; } button { cursor:pointer; } .app-shell { mi
   .identity { grid-template-columns: 1fr 1fr; }
   .choice { min-height: 44px; font-size: 13px; }
 }
+
 
 
 

@@ -382,19 +382,15 @@ function AdminAuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
   return (
     <div className="modal-backdrop">
       <form className="modal" onSubmit={handleSubmit}>
-        <button type="button" className="close" onClick={onClose}>
+        <button type="button" className="close" onClick={onClose} style={{ color: "#fff", zIndex: 2 }}>
           ×
         </button>
-        <div style={{ textAlign: "center", marginBottom: "10px" }}>
-          <img
-            src="/LOGO-ENSEG-branco.png"
-            alt="ENSEG"
-            className="modal-logo-img"
-            style={{ background: "#0e0f11", padding: "6px 14px", borderRadius: "6px", display: "inline-block" }}
-          />
+        <div className="modal-header-banner">
+          <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" className="modal-logo-img" />
+          <p className="eyebrow">AUTENTICAÇÃO RESTRITA</p>
+          <h2>Acesso do Administrador</h2>
         </div>
-        <p className="eyebrow" style={{ textAlign: "center" }}>AUTENTICAÇÃO RESTRITA</p>
-        <h2 style={{ textAlign: "center", marginBottom: "20px" }}>Acesso do Administrador</h2>
+
         <label>
           SENHA DE ACESSO
           <input
@@ -448,19 +444,15 @@ function FirefighterIdentifyModal({
   return (
     <div className="modal-backdrop">
       <form className="modal" onSubmit={handleSubmit}>
-        <button type="button" className="close" onClick={onClose}>
+        <button type="button" className="close" onClick={onClose} style={{ color: "#fff", zIndex: 2 }}>
           ×
         </button>
-        <div style={{ textAlign: "center", marginBottom: "10px" }}>
-          <img
-            src="/LOGO-ENSEG-branco.png"
-            alt="ENSEG"
-            className="modal-logo-img"
-            style={{ background: "#0e0f11", padding: "6px 14px", borderRadius: "6px", display: "inline-block" }}
-          />
+        <div className="modal-header-banner">
+          <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" className="modal-logo-img" />
+          <p className="eyebrow">IDENTIFICAÇÃO OPERACIONAL</p>
+          <h2>Identificação do Bombeiro</h2>
         </div>
-        <p className="eyebrow" style={{ textAlign: "center" }}>IDENTIFICAÇÃO OPERACIONAL</p>
-        <h2 style={{ textAlign: "center", marginBottom: "20px" }}>Identificação do Bombeiro</h2>
+
         <label>
           BOMBEIRO RESPONSÁVEL
           <select value={selectedName} onChange={(e) => setSelectedName(e.target.value)}>
