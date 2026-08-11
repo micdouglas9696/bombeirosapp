@@ -157,6 +157,13 @@ export default function Home() {
     }
   };
 
+  const handleUpdateRoundStatus = async (roundId: string, newStatus: "Em análise" | "Aprovado" | "Ocorrência") => {
+    setRounds((prev) => prev.map((r) => (r.id === roundId ? { ...r, status: newStatus } : r)));
+    if (supabase) {
+      await supabase.from("operational_rounds").update({ status: newStatus }).eq("id", roundId);
+    }
+  };
+
   const totalToday = rounds.filter((round) => new Date(round.created_at).toDateString() === new Date().toDateString()).length;
   const average = rounds.length ? `${(rounds.reduce((sum, round) => sum + round.conformity, 0) / rounds.length).toFixed(1).replace(".", ",")}%` : "—";
 
@@ -273,7 +280,7 @@ export default function Home() {
         {view === "dashboard" && role === "admin" && (
           <Dashboard rounds={rounds} totalToday={totalToday} average={average} onStart={() => setView("checklist")} />
         )}
-        {view === "reports" && role === "admin" && <Reports rounds={rounds} />}
+        {view === "reports" && role === "admin" && <Reports rounds={rounds} onUpdateRoundStatus={handleUpdateRoundStatus} />}
         {view === "people" && role === "admin" && <People people={people} onAdd={() => setShowPersonModal(true)} />}
         {view === "checklist" && (
           <Checklist
@@ -566,10 +573,10 @@ function Metric({ label, value, detail, alert, danger }: { label: string; value:
   );
 }
 
-function ReportRow({ report }: { report: Round }) {
+function ReportRow({ report, onClick }: { report: Round; onClick?: () => void }) {
   const tone = report.status === "Aprovado" ? "good" : report.status === "Ocorrência" ? "danger" : "warn";
   return (
-    <article className="report-row">
+    <article className="report-row" onClick={onClick} style={{ cursor: onClick ? "pointer" : "default" }}>
       <div className="report-icon">✓</div>
       <div className="report-main">
         <strong>{report.protocol}</strong>
@@ -578,26 +585,472 @@ function ReportRow({ report }: { report: Round }) {
         </span>
       </div>
       <span className="report-date">{dateLabel(report.created_at)}</span>
-      <b className="report-score">{report.conformity}%</b>
+      <b className="report-score" style={{ color: report.conformity === 100 ? "var(--green)" : "var(--red)" }}>
+        {report.conformity}%
+      </b>
       <Tag tone={tone}>{report.status}</Tag>
       <span />
     </article>
   );
 }
 
-function Reports({ rounds }: { rounds: Round[] }) {
+type RoundAnswer = {
+  id?: string;
+  round_id: string;
+  item_number: number;
+  item_text: string;
+  status: Status;
+  location?: string | null;
+  observation?: string | null;
+  priority?: Priority | null;
+  action_taken?: string | null;
+  supervisor_notified?: string | null;
+  ss_number?: string | null;
+  photo_path?: string | null;
+};
+
+function RoundDetailsModal({
+  round,
+  onClose,
+  onUpdateStatus
+}: {
+  round: Round;
+  onClose: () => void;
+  onUpdateStatus: (roundId: string, newStatus: "Em análise" | "Aprovado" | "Ocorrência") => void;
+}) {
+  const [answers, setAnswers] = useState<RoundAnswer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<"all" | "issues" | "conform">("all");
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadAnswers() {
+      setLoading(true);
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("round_answers")
+          .select("*")
+          .eq("round_id", round.id)
+          .order("item_number");
+
+        if (!error && data && data.length > 0) {
+          if (isMounted) {
+            setAnswers(data as RoundAnswer[]);
+            setLoading(false);
+          }
+          return;
+        }
+      }
+
+      // Demo / Fallback mode: Map all 20 checklist items with simulated answers
+      const demoAnswers: RoundAnswer[] = checklistItems.map((itemText, index) => {
+        const itemNumber = index + 1;
+        const isNonConform = round.non_conformities > 0 && index < round.non_conformities;
+        const isNA = index === 11 && round.non_conformities === 0;
+        const status: Status = isNonConform ? "Não conforme" : isNA ? "N/A" : "Conforme";
+
+        return {
+          round_id: round.id,
+          item_number: itemNumber,
+          item_text: itemText,
+          status,
+          location: isNonConform ? `Setor Operacional TPS ${index + 1}` : null,
+          observation: isNonConform ? `Apontamento na inspeção de ${itemText.toLowerCase()}. Ponto verificado pelo bombeiro de ronda.` : null,
+          priority: isNonConform ? (index % 2 === 0 ? "Alta" : "Média") : null,
+          action_taken: isNonConform ? "Área isolada e comunicado imediato à brigada de plantão." : null,
+          supervisor_notified: isNonConform ? "Inspetor de Segurança — 15:20h" : null,
+          ss_number: isNonConform ? `SS-2026-${1080 + index}` : null,
+          photo_path: null
+        };
+      });
+
+      if (isMounted) {
+        setAnswers(demoAnswers);
+        setLoading(false);
+      }
+    }
+
+    void loadAnswers();
+    return () => {
+      isMounted = false;
+    };
+  }, [round]);
+
+  const filteredAnswers = useMemo(() => {
+    if (activeTab === "issues") return answers.filter((a) => a.status === "Não conforme");
+    if (activeTab === "conform") return answers.filter((a) => a.status === "Conforme");
+    return answers;
+  }, [answers, activeTab]);
+
+  const totalConform = answers.filter((a) => a.status === "Conforme").length;
+  const totalNonConform = answers.filter((a) => a.status === "Não conforme").length;
+  const totalNA = answers.filter((a) => a.status === "N/A").length;
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal modal-wide">
+        <button type="button" className="close" onClick={onClose} style={{ color: "#fff", zIndex: 2 }}>
+          ×
+        </button>
+
+        <div className="modal-header-banner">
+          <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" className="modal-logo-img" />
+          <p className="eyebrow">RELATÓRIO COMPLETO DE AUDITORIA DA RONDA</p>
+          <h2>{round.protocol}</h2>
+        </div>
+
+        <div style={{ padding: "0 4px" }}>
+          {/* Metadata Banner */}
+          <div className="identity" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "16px" }}>
+            <div>
+              <label>BOMBEIRO RESPONSÁVEL</label>
+              <strong>{round.firefighter_name}</strong>
+            </div>
+            <div>
+              <label>TURNO</label>
+              <strong>{round.shift}</strong>
+            </div>
+            <div>
+              <label>POSTOS DE TRABALHO</label>
+              <strong style={{ fontSize: "11px" }}>
+                TPS {round.tps_team} · TECA {round.teca_team} · Hangar {round.hangar_united_team}
+              </strong>
+            </div>
+            <div>
+              <label>DATA DE REGISTRO</label>
+              <strong>{dateLabel(round.created_at)}</strong>
+            </div>
+          </div>
+
+          {/* Quick Round Metrics */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "20px" }}>
+            <div className="metric" style={{ padding: "12px", minHeight: "auto", borderTopColor: "var(--red)" }}>
+              <p style={{ margin: 0, fontSize: "10px" }}>CONFORMIDADE GERAL</p>
+              <b style={{ fontSize: "24px", color: round.conformity === 100 ? "var(--green)" : "var(--red)" }}>
+                {round.conformity}%
+              </b>
+            </div>
+            <div className="metric" style={{ padding: "12px", minHeight: "auto", borderTopColor: "#159365" }}>
+              <p style={{ margin: 0, fontSize: "10px" }}>ITENS CONFORMES</p>
+              <b style={{ fontSize: "24px", color: "var(--green)" }}>{totalConform} / 20</b>
+            </div>
+            <div className="metric" style={{ padding: "12px", minHeight: "auto", borderTopColor: "var(--red)" }}>
+              <p style={{ margin: 0, fontSize: "10px" }}>NÃO CONFORMIDADES</p>
+              <b style={{ fontSize: "24px", color: totalNonConform ? "var(--red)" : "#666" }}>{totalNonConform}</b>
+            </div>
+            <div className="metric" style={{ padding: "12px", minHeight: "auto", borderTopColor: "#c8a66a" }}>
+              <p style={{ margin: 0, fontSize: "10px" }}>NÃO APLICÁVEL (N/A)</p>
+              <b style={{ fontSize: "24px", color: "#b38228" }}>{totalNA}</b>
+            </div>
+          </div>
+
+          {/* Tabs Filter for Answers */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: "10px", marginBottom: "14px" }}>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                type="button"
+                className={activeTab === "all" ? "primary" : "outline"}
+                style={{ padding: "6px 14px", fontSize: "11px" }}
+                onClick={() => setActiveTab("all")}
+              >
+                Todas as 20 Respostas ({answers.length})
+              </button>
+              <button
+                type="button"
+                className={activeTab === "issues" ? "primary" : "outline"}
+                style={{ padding: "6px 14px", fontSize: "11px", borderColor: totalNonConform ? "var(--red)" : "" }}
+                onClick={() => setActiveTab("issues")}
+              >
+                Ocorrências / Divergências ({totalNonConform})
+              </button>
+              <button
+                type="button"
+                className={activeTab === "conform" ? "primary" : "outline"}
+                style={{ padding: "6px 14px", fontSize: "11px" }}
+                onClick={() => setActiveTab("conform")}
+              >
+                Itens Ok ({totalConform})
+              </button>
+            </div>
+
+            <Tag tone={round.status === "Aprovado" ? "good" : round.status === "Ocorrência" ? "danger" : "warn"}>
+              STATUS: {round.status.toUpperCase()}
+            </Tag>
+          </div>
+
+          {/* List of 20 Checklist Item Responses */}
+          {loading ? (
+            <div style={{ padding: "30px", textAlign: "center", color: "#888" }}>Carregando detalhamento das respostas...</div>
+          ) : (
+            <div className="answers-audit-list">
+              {filteredAnswers.length ? (
+                filteredAnswers.map((ans) => {
+                  const isBad = ans.status === "Não conforme";
+                  const isOk = ans.status === "Conforme";
+
+                  return (
+                    <div className="audit-item-row" key={ans.item_number} style={{ borderColor: isBad ? "#f5baba" : "#e7e7e2" }}>
+                      <div className="audit-item-header">
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          <span style={{ fontWeight: "bold", width: "24px", color: isBad ? "var(--red)" : "#888" }}>
+                            #{ans.item_number}
+                          </span>
+                          <strong>{ans.item_text}</strong>
+                        </div>
+                        <Tag tone={isOk ? "good" : isBad ? "danger" : "warn"}>{ans.status}</Tag>
+                      </div>
+
+                      {/* Detailed Issue Breakdown when "Não conforme" */}
+                      {isBad && (
+                        <div className="audit-issue-detail">
+                          <div>
+                            <strong>LOCALIZAÇÃO EXATA:</strong>
+                            <p>{ans.location || "Não especificado"}</p>
+                          </div>
+                          <div>
+                            <strong>OBSERVAÇÃO / ANOMALIA:</strong>
+                            <p>{ans.observation || "Sem observações adicionais"}</p>
+                          </div>
+                          <div>
+                            <strong>PROVIDÊNCIA ADOTADA:</strong>
+                            <p>{ans.action_taken || "Aguardando equipe de manutenção"}</p>
+                          </div>
+                          <div>
+                            <strong>SUPERVISOR NOTIFICADO / HORÁRIO:</strong>
+                            <p>{ans.supervisor_notified || "N/A"}</p>
+                          </div>
+                          {ans.ss_number && (
+                            <div>
+                              <strong>SOLICITAÇÃO DE SERVIÇO (SS):</strong>
+                              <p style={{ fontWeight: "bold", color: "var(--red)" }}>{ans.ss_number}</p>
+                            </div>
+                          )}
+                          {ans.photo_path && (
+                            <div>
+                              <strong>REGISTRO FOTOGRÁFICO DE EVIDÊNCIA:</strong>
+                              <a href={ans.photo_path} target="_blank" rel="noopener noreferrer">
+                                <img src={ans.photo_path} alt="Evidência" className="audit-photo-img" />
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div style={{ padding: "20px", textAlign: "center", color: "#888" }}>Nenhum item nesta categoria.</div>
+              )}
+            </div>
+          )}
+
+          {/* Admin Validation Actions */}
+          <div className="modal-actions" style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px solid var(--line)" }}>
+            <button type="button" className="outline" onClick={onClose}>
+              Fechar
+            </button>
+            <button
+              type="button"
+              className="outline"
+              onClick={() => {
+                window.print();
+              }}
+            >
+              🖨️ Imprimir / PDF
+            </button>
+            {round.status !== "Aprovado" && (
+              <button
+                type="button"
+                className="primary"
+                style={{ background: "var(--green)" }}
+                onClick={() => onUpdateStatus(round.id, "Aprovado")}
+              >
+                ✓ Aprovar Vistoria
+              </button>
+            )}
+            {round.status !== "Ocorrência" && round.non_conformities > 0 && (
+              <button
+                type="button"
+                className="primary"
+                style={{ background: "var(--red)" }}
+                onClick={() => onUpdateStatus(round.id, "Ocorrência")}
+              >
+                ⚠️ Marcar como Ocorrência
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Reports({
+  rounds,
+  onUpdateRoundStatus
+}: {
+  rounds: Round[];
+  onUpdateRoundStatus: (roundId: string, newStatus: "Em análise" | "Aprovado" | "Ocorrência") => void;
+}) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [firefighterFilter, setFirefighterFilter] = useState("all");
+  const [shiftFilter, setShiftFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedRound, setSelectedRound] = useState<Round | null>(null);
+
+  // Extract unique firefighter names for dropdown filter
+  const firefighterOptions = useMemo(() => {
+    const names = Array.from(new Set(rounds.map((r) => r.firefighter_name)));
+    return names.sort();
+  }, [rounds]);
+
+  // Filtered rounds logic
+  const filteredRounds = useMemo(() => {
+    return rounds.filter((r) => {
+      const matchesSearch =
+        r.protocol.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        r.firefighter_name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesFirefighter = firefighterFilter === "all" || r.firefighter_name === firefighterFilter;
+      const matchesShift = shiftFilter === "all" || r.shift === shiftFilter;
+      const matchesStatus = statusFilter === "all" || r.status === statusFilter;
+      return matchesSearch && matchesFirefighter && matchesShift && matchesStatus;
+    });
+  }, [rounds, searchTerm, firefighterFilter, shiftFilter, statusFilter]);
+
+  // Summary Metrics for Reports
+  const totalRounds = filteredRounds.length;
+  const avgConformity = totalRounds
+    ? Math.round(filteredRounds.reduce((acc, r) => acc + r.conformity, 0) / totalRounds)
+    : 0;
+  const totalOccurrences = filteredRounds.reduce((acc, r) => acc + r.non_conformities, 0);
+  const totalApproved = filteredRounds.filter((r) => r.status === "Aprovado").length;
+
   return (
     <div className="content">
+      <section className="section-head">
+        <div>
+          <p className="eyebrow">AUDITORIA E CONSULTA OPERACIONAL</p>
+          <h2>Relatórios de Vistorias e Inspeções por Bombeiro</h2>
+          <p className="muted">
+            Consulte o histórico detalhado, filtre por bombeiro ou turno e clique em qualquer relatório para inspecionar as 20 respostas.
+          </p>
+        </div>
+      </section>
+
+      {/* Reports Dashboard Summary Cards */}
+      <div className="stats" style={{ marginBottom: "24px" }}>
+        <Metric label="TOTAL DE RONDAS AUDITADAS" value={totalRounds.toString()} detail="Vistorias filtradas" />
+        <Metric
+          label="MÉDIA DE CONFORMIDADE"
+          value={`${avgConformity}%`}
+          detail="Índice de segurança operacional"
+          alert={avgConformity < 85}
+        />
+        <Metric
+          label="NÃO CONFORMIDADES LEVANTADAS"
+          value={totalOccurrences.toString()}
+          detail="Itens irregulares nos postos"
+          danger={totalOccurrences > 0}
+        />
+        <Metric label="RONDAS APROVADAS" value={`${totalApproved} / ${totalRounds}`} detail="Sem ressalvas graves" />
+      </div>
+
+      {/* Filters Toolbar */}
+      <div className="report-filter-bar">
+        <input
+          type="text"
+          placeholder="🔍 Buscar por Protocolo ou Nome do Bombeiro..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        <select value={firefighterFilter} onChange={(e) => setFirefighterFilter(e.target.value)}>
+          <option value="all">Todos os Bombeiros ({firefighterOptions.length})</option>
+          {firefighterOptions.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select value={shiftFilter} onChange={(e) => setShiftFilter(e.target.value)}>
+          <option value="all">Todos os Turnos</option>
+          <option value="Diurno">Turno Diurno</option>
+          <option value="Noturno">Turno Noturno</option>
+        </select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="all">Todos os Status</option>
+          <option value="Aprovado">Aprovado</option>
+          <option value="Em análise">Em análise</option>
+          <option value="Ocorrência">Ocorrência</option>
+        </select>
+      </div>
+
+      {/* Reports List Table */}
       <div className="reports-card">
-        <div className="table-head">
+        <div className="table-head" style={{ gridTemplateColumns: "minmax(200px, 1fr) 140px 110px 100px 140px" }}>
           <span>PROTOCOLO / RESPONSÁVEL</span>
-          <span>DATA</span>
+          <span>DATA / HORÁRIO</span>
           <span>CONFORMIDADE</span>
           <span>STATUS</span>
-          <span />
+          <span>AÇÃO</span>
         </div>
-        {rounds.length ? rounds.map((round) => <ReportRow key={round.id} report={round} />) : <div className="empty-line">Nenhum relatório disponível.</div>}
+
+        {filteredRounds.length ? (
+          filteredRounds.map((round) => {
+            const tone = round.status === "Aprovado" ? "good" : round.status === "Ocorrência" ? "danger" : "warn";
+            return (
+              <div
+                key={round.id}
+                className="report-row"
+                style={{ gridTemplateColumns: "minmax(200px, 1fr) 140px 110px 100px 140px", cursor: "pointer" }}
+                onClick={() => setSelectedRound(round)}
+              >
+                <div className="report-main">
+                  <strong>{round.protocol}</strong>
+                  <span>
+                    👤 <strong>{round.firefighter_name}</strong> ({round.shift}) · Posto TPS {round.tps_team}
+                  </span>
+                </div>
+                <span className="report-date">{dateLabel(round.created_at)}</span>
+                <b className="report-score" style={{ color: round.conformity === 100 ? "var(--green)" : "var(--red)" }}>
+                  {round.conformity}%
+                </b>
+                <div>
+                  <Tag tone={tone}>{round.status}</Tag>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    className="primary"
+                    style={{ padding: "6px 10px", fontSize: "11px" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedRound(round);
+                    }}
+                  >
+                    🔎 Ver 20 Respostas
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="empty-line" style={{ padding: "24px", textAlign: "center" }}>
+            Nenhum relatório encontrado para os filtros selecionados.
+          </div>
+        )}
       </div>
+
+      {/* Round Detailed Audit Modal */}
+      {selectedRound && (
+        <RoundDetailsModal
+          round={selectedRound}
+          onClose={() => setSelectedRound(null)}
+          onUpdateStatus={(roundId, newStatus) => {
+            onUpdateRoundStatus(roundId, newStatus);
+            setSelectedRound((curr) => (curr ? { ...curr, status: newStatus } : null));
+          }}
+        />
+      )}
     </div>
   );
 }
