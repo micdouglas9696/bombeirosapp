@@ -328,26 +328,40 @@ function LandingGate({ onSelectAdmin, onSelectFirefighter }: { onSelectAdmin: ()
         </p>
 
         <div className="landing-grid">
-          <div className="role-card" onClick={onSelectAdmin}>
+          <div className="role-card" onClick={onSelectAdmin} role="button" tabIndex={0}>
             <span className="role-badge">Acesso Restrito</span>
             <div className="role-icon">🛡️</div>
             <h3>Administrador</h3>
             <p>Acesse a visão geral das operações, relatórios de auditoria e gerencie os cadastros da equipe de bombeiros.</p>
-            <div className="role-btn">
+            <button
+              type="button"
+              className="role-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectAdmin();
+              }}
+            >
               <span>Entrar com senha</span>
               <span>→</span>
-            </div>
+            </button>
           </div>
 
-          <div className="role-card" onClick={onSelectFirefighter}>
+          <div className="role-card" onClick={onSelectFirefighter} role="button" tabIndex={0}>
             <span className="role-badge">Operacional</span>
             <div className="role-icon">👨‍🚒</div>
             <h3>Bombeiro Operacional</h3>
             <p>Identifique-se para iniciar o preenchimento de uma nova ronda de inspeção nos postos TPS, TECA e Hangar.</p>
-            <div className="role-btn">
+            <button
+              type="button"
+              className="role-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectFirefighter();
+              }}
+            >
               <span>Iniciar Nova Ronda</span>
               <span>→</span>
-            </div>
+            </button>
           </div>
         </div>
 
