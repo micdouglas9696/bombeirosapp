@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase, supabaseConfigured } from "../lib/supabase";
 
 type Role = "admin" | "firefighter" | null;
-type View = "dashboard" | "reports" | "people" | "checklist";
+type View = "dashboard" | "reports" | "people" | "settings" | "checklist";
 type Status = "Conforme" | "Não conforme" | "N/A";
 type Team = "Alfa" | "Bravo" | "Charlie" | "Delta";
 type Priority = "Baixa" | "Média" | "Alta" | "Crítica";
 type Firefighter = { id?: string; name: string; shift: "Diurno" | "Noturno"; tps_team: Team; teca_team: Team; hangar_united_team: Team; active: boolean };
 type Round = { id: string; protocol: string; firefighter_name: string; shift: string; tps_team: string; teca_team: string; hangar_united_team: string; conformity: number; non_conformities: number; status: "Em análise" | "Aprovado" | "Ocorrência"; created_at: string };
 type Issue = { location: string; observation: string; priority: Priority; action_taken: string; supervisor_notified: string; ss_number: string; photo: File | null };
+type AdminNotification = { id: string; round_id: string; title: string; message: string; acknowledged_at: string | null; created_at: string };
 
 const checklistItems = ["Saídas de emergência sem bloqueios", "Escadas de emergência livres", "Portas corta-fogo íntegras e fechando corretamente", "Extintores acessíveis e sem avarias", "Hidrantes e mangotinhos desobstruídos", "Acionadores manuais de incêndio íntegros", "Iluminação de emergência operacional", "Sinalização de emergência visível", "Corredores e acessos livres", "Ausência de materiais combustíveis acumulados", "Equipamentos elétricos sem anormalidades", "Escadas rolantes", "Elevadores", "Ausência de vazamentos de água ou outros líquidos", "Ausência de fumaça, odor de queimado ou superaquecimento", "Objetos abandonados", "DEA em condições de uso", "Comunicação via rádio operacional", "Acesso para viaturas de emergência desobstruído", "Macas de resgate"];
 const samplePeople: Firefighter[] = [
@@ -24,11 +25,21 @@ function Tag({ children, tone = "neutral" }: { children: React.ReactNode; tone?:
   return <span className={`tag ${tone}`}>{children}</span>;
 }
 
+const fileToBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = (error) => reject(error);
+  });
+
 export default function Home() {
   const [role, setRole] = useState<Role>(null);
   const [view, setView] = useState<View>("dashboard");
   const [people, setPeople] = useState(samplePeople);
   const [rounds, setRounds] = useState<Round[]>([]);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [recipientEmails, setRecipientEmails] = useState<string[]>([]);
   const [answers, setAnswers] = useState<Record<number, Status>>({});
   const [issues, setIssues] = useState<Record<number, Issue>>({});
   const [operator, setOperator] = useState(samplePeople[0].name);
@@ -43,12 +54,14 @@ export default function Home() {
   const firefighter = people.find((person) => person.name === operator) ?? people[0];
 
   const fetchData = async () => {
-    if (!supabase) return { people: null, rounds: null, error: null };
-    const [p, r] = await Promise.all([
+    if (!supabase) return { people: null, rounds: null, notifications: null, settings: null, error: null };
+    const [p, r, n, s] = await Promise.all([
       supabase.from("firefighters").select("id,name,shift,tps_team,teca_team,hangar_united_team,active").order("name"),
-      supabase.from("operational_rounds").select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,created_at").order("created_at", { ascending: false }).limit(50)
+      supabase.from("operational_rounds").select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,created_at").order("created_at", { ascending: false }).limit(50),
+      supabase.from("admin_notifications").select("id,round_id,title,message,acknowledged_at,created_at").is("acknowledged_at", null).order("created_at", { ascending: false }),
+      supabase.from("notification_settings").select("recipient_emails").eq("id", true).maybeSingle()
     ]);
-    return { people: p.data as Firefighter[] | null, rounds: r.data as Round[] | null, error: p.error ?? r.error };
+    return { people: p.data as Firefighter[] | null, rounds: r.data as Round[] | null, notifications: n.data as AdminNotification[] | null, settings: s.data as { recipient_emails: string[] } | null, error: p.error ?? r.error ?? n.error ?? s.error };
   };
 
   const applyData = async () => {
@@ -59,6 +72,8 @@ export default function Home() {
     }
     if (result.people) setPeople(result.people);
     if (result.rounds) setRounds(result.rounds);
+    if (result.notifications) setNotifications(result.notifications);
+    if (result.settings) setRecipientEmails(result.settings.recipient_emails ?? []);
   };
 
   useEffect(() => {
@@ -72,6 +87,8 @@ export default function Home() {
         setOperator(result.people[0].name);
       }
       if (result.rounds) setRounds(result.rounds);
+      if (result.notifications) setNotifications(result.notifications);
+      if (result.settings) setRecipientEmails(result.settings.recipient_emails ?? []);
     });
   }, []);
 
@@ -145,6 +162,23 @@ export default function Home() {
       }));
       const { error: answersError } = await client.from("round_answers").insert(rows);
       if (answersError) throw answersError;
+      if (nonConformities > 0) {
+        const notification = {
+          round_id: round.id,
+          title: "Nova ocorrência operacional",
+          message: `${nonConformities} não conformidade(s) registrada(s) na ronda ${protocol}, por ${firefighter.name}.`
+        };
+        const { error: notificationError } = await client.from("admin_notifications").insert(notification);
+        if (notificationError) throw notificationError;
+        const { data: settings } = await client.from("notification_settings").select("recipient_emails").eq("id", true).maybeSingle();
+        const recipients = settings?.recipient_emails ?? [];
+        if (recipients.length) {
+          const { error: emailError } = await client.functions.invoke("send-inconsistency-notification", {
+            body: { recipients, protocol, firefighterName: firefighter.name, nonConformities, createdAt: new Date().toLocaleString("pt-BR") }
+          });
+          if (emailError) setMessage("A ocorrência foi registrada, mas o e-mail de alerta não pôde ser enviado.");
+        }
+      }
       setSubmittedProtocol(protocol);
       setAnswers({});
       setIssues({});
@@ -162,6 +196,28 @@ export default function Home() {
     if (supabase) {
       await supabase.from("operational_rounds").update({ status: newStatus }).eq("id", roundId);
     }
+  };
+
+  const acknowledgeNotification = async (notificationId: string) => {
+    const acknowledgedAt = new Date().toISOString();
+    setNotifications((current) => current.filter((notification) => notification.id !== notificationId));
+    if (supabase) {
+      const { error } = await supabase.from("admin_notifications").update({ acknowledged_at: acknowledgedAt }).eq("id", notificationId);
+      if (error) {
+        setMessage("Não foi possível confirmar a ciência da ocorrência.");
+        await applyData();
+      }
+    }
+  };
+
+  const saveRecipientEmails = async (emails: string[]) => {
+    if (!supabase) {
+      setRecipientEmails(emails);
+      return;
+    }
+    const { error } = await supabase.from("notification_settings").upsert({ id: true, recipient_emails: emails, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    setRecipientEmails(emails);
   };
 
   const totalToday = rounds.filter((round) => new Date(round.created_at).toDateString() === new Date().toDateString()).length;
@@ -222,6 +278,9 @@ export default function Home() {
               <button className={view === "people" ? "active" : ""} onClick={() => setView("people")}>
                 ♙ Bombeiros
               </button>
+              <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+                ⚙ Configurações
+              </button>
               <button className={view === "checklist" ? "active" : ""} onClick={() => setView("checklist")}>
                 ✓ Nova ronda
               </button>
@@ -268,6 +327,7 @@ export default function Home() {
             </strong>
           </div>
           <div>
+            {role === "admin" && <NotificationBell notifications={notifications} onAcknowledge={acknowledgeNotification} />}
             <Tag tone={role === "admin" ? "danger" : "good"}>
               {role === "admin" ? "MODO ADMIN" : `BOMBEIRO: ${firefighter?.name.split(" ")[0].toUpperCase()}`}
             </Tag>
@@ -282,6 +342,7 @@ export default function Home() {
         )}
         {view === "reports" && role === "admin" && <Reports rounds={rounds} onUpdateRoundStatus={handleUpdateRoundStatus} />}
         {view === "people" && role === "admin" && <People people={people} onAdd={() => setShowPersonModal(true)} />}
+        {view === "settings" && role === "admin" && <NotificationSettings emails={recipientEmails} onSave={saveRecipientEmails} />}
         {view === "checklist" && (
           <Checklist
             people={people}
@@ -393,10 +454,10 @@ function AdminAuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === "admin123" || password === "admin2026" || password === "admin") {
+    if (password === "admin321") {
       onSuccess();
     } else {
-      setError("Senha incorreta. Tente novamente (Senha de demo: admin2026).");
+      setError("Senha incorreta. Tente novamente.");
     }
   };
 
@@ -426,9 +487,6 @@ function AdminAuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
             }}
           />
         </label>
-        <div className="password-hint">
-          🔑 Senha de demonstração: <strong>admin2026</strong>
-        </div>
         {error && <p className="form-error">{error}</p>}
         <div className="modal-actions">
           <button type="button" className="outline" onClick={onClose}>
@@ -439,6 +497,82 @@ function AdminAuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function NotificationBell({ notifications, onAcknowledge }: { notifications: AdminNotification[]; onAcknowledge: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="notification-center">
+      <button type="button" className="notification-bell" aria-label="Notificações de ocorrências" onClick={() => setOpen((current) => !current)}>
+        🔔
+        {notifications.length > 0 && <span>{notifications.length}</span>}
+      </button>
+      {open && (
+        <div className="notification-popover">
+          <div className="notification-popover-head">
+            <strong>Ocorrências pendentes</strong>
+            <small>{notifications.length} aguardando ciência</small>
+          </div>
+          {notifications.length ? notifications.map((notification) => (
+            <article className="notification-item" key={notification.id}>
+              <b>{notification.title}</b>
+              <p>{notification.message}</p>
+              <small>{dateLabel(notification.created_at)}</small>
+              <button type="button" className="primary" onClick={() => onAcknowledge(notification.id)}>✓ Ciente</button>
+            </article>
+          )) : <p className="notification-empty">Nenhuma ocorrência aguardando confirmação.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NotificationSettings({ emails, onSave }: { emails: string[]; onSave: (emails: string[]) => Promise<void> }) {
+  const [value, setValue] = useState(emails.join(", "));
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState("");
+
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const recipients = value.split(/[;,\n]/).map((email) => email.trim()).filter(Boolean);
+    if (recipients.some((email) => !/^\S+@\S+\.\S+$/.test(email))) {
+      setFeedback("Informe apenas endereços de e-mail válidos, separados por vírgula.");
+      return;
+    }
+    setSaving(true);
+    setFeedback("");
+    try {
+      await onSave(recipients);
+      setFeedback("Destinatários salvos. As próximas ocorrências serão enviadas para esta lista.");
+    } catch {
+      setFeedback("Não foi possível salvar os destinatários.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="content">
+      <section className="section-head">
+        <div>
+          <p className="eyebrow">ALERTAS OPERACIONAIS</p>
+          <h2>Configurações de notificações</h2>
+          <p className="muted">Defina quem recebe e-mail sempre que uma ronda registrar uma não conformidade.</p>
+        </div>
+      </section>
+      <form className="settings-card" onSubmit={save}>
+        <label>
+          E-MAILS PARA NOTIFICAÇÃO
+          <textarea value={value} onChange={(event) => setValue(event.target.value)} placeholder="gestao@empresa.com, seguranca@empresa.com" rows={4} />
+          <small>Separe vários destinatários por vírgula, ponto e vírgula ou uma linha por endereço.</small>
+        </label>
+        {feedback && <p className={feedback.startsWith("Destinatários") ? "settings-success" : "form-error"}>{feedback}</p>}
+        <div className="modal-actions"><button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar destinatários"}</button></div>
+      </form>
+      <p className="settings-note">Para habilitar o envio efetivo, configure os segredos <code>RESEND_API_KEY</code> e <code>RESEND_FROM_EMAIL</code> na função do Supabase.</p>
     </div>
   );
 }
