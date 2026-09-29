@@ -932,6 +932,23 @@ const downloadElementAsPdf = async (elementId: string, filename: string) => {
   }
 };
 
+function PdfSignatures() {
+  return (
+    <div className="pdf-signatures-grid" style={{ marginTop: "auto", paddingTop: "14px" }}>
+      <div className="pdf-signature-box">
+        <div className="pdf-signature-line" />
+        <strong>ASSINATURA GERENTE DOS BOMBEIROS ENSEG</strong>
+        <span>ENSEG Vigilância e Segurança Operacional</span>
+      </div>
+      <div className="pdf-signature-box">
+        <div className="pdf-signature-line" />
+        <strong>ASSINATURA DO SUPERVISOR DE EMERGÊNCIA RIO GALEÃO</strong>
+        <span>Supervisão de Emergência · RIOgaleão</span>
+      </div>
+    </div>
+  );
+}
+
 function RoundDetailsModal({
   round,
   onClose,
@@ -1225,18 +1242,7 @@ function RoundDetailsModal({
                   </div>
 
                   {/* Assinaturas Oficiais */}
-                  <div className="pdf-signatures-grid" style={{ marginTop: "auto", paddingTop: "14px" }}>
-                    <div className="pdf-signature-box">
-                      <div className="pdf-signature-line" />
-                      <strong>{round.firefighter_name}</strong>
-                      <span>Bombeiro Responsável · Turno {round.shift}</span>
-                    </div>
-                    <div className="pdf-signature-box">
-                      <div className="pdf-signature-line" />
-                      <strong>SUPERVISÃO OPERACIONAL DE BRIGADA</strong>
-                      <span>Fiscalização de Segurança · SBGL Galeão</span>
-                    </div>
-                  </div>
+                  <PdfSignatures />
                 </div>
 
                 <div className="pdf-page-footer">
@@ -1370,20 +1376,7 @@ function RoundDetailsModal({
                       )}
                     </div>
 
-                    {isLastPage && (
-                      <div className="pdf-signatures-grid" style={{ marginTop: "auto", paddingTop: "14px" }}>
-                        <div className="pdf-signature-box">
-                          <div className="pdf-signature-line" />
-                          <strong>{round.firefighter_name}</strong>
-                          <span>Bombeiro Responsável · Turno {round.shift}</span>
-                        </div>
-                        <div className="pdf-signature-box">
-                          <div className="pdf-signature-line" />
-                          <strong>SUPERVISÃO OPERACIONAL DE BRIGADA</strong>
-                          <span>Fiscalização de Segurança · SBGL Galeão</span>
-                        </div>
-                      </div>
-                    )}
+                    {isLastPage && <PdfSignatures />}
                   </div>
 
                   <div className="pdf-page-footer">
@@ -1731,20 +1724,7 @@ function PdfReportModal({
               </table>
 
               {/* Se for página única em modo sintético, coloca assinaturas na página 1 */}
-              {reportType === "synthetic" && totalTablePages === 1 && (
-                <div className="pdf-signatures-grid" style={{ marginTop: "auto", paddingTop: "14px" }}>
-                  <div className="pdf-signature-box">
-                    <div className="pdf-signature-line" />
-                    <strong>RESPONSÁVEL OPERACIONAL / BOMBEIRO LÍDER</strong>
-                    <span>Fiscalização de Brigada · SBGL Galeão</span>
-                  </div>
-                  <div className="pdf-signature-box">
-                    <div className="pdf-signature-line" />
-                    <strong>COORDENAÇÃO DE SEGURANÇA E EMERGÊNCIA</strong>
-                    <span>ENSEG Vigilância e Segurança Operacional</span>
-                  </div>
-                </div>
-              )}
+              {reportType === "synthetic" && totalTablePages === 1 && <PdfSignatures />}
 
               {/* Se for analítico e não tiver ocorrências na página única */}
               {reportType === "analytical" && totalTablePages === 1 && occurrenceChunks.length === 0 && (
@@ -1752,18 +1732,7 @@ function PdfReportModal({
                   <div style={{ marginTop: "16px", padding: "12px", background: "#edf8f2", border: "1px solid #cce2d8", borderRadius: "4px", fontSize: "11px", color: "#138b60" }}>
                     ✓ Nenhuma não conformidade registrada nas vistorias deste período. Operação 100% conforme.
                   </div>
-                  <div className="pdf-signatures-grid" style={{ marginTop: "auto", paddingTop: "14px" }}>
-                    <div className="pdf-signature-box">
-                      <div className="pdf-signature-line" />
-                      <strong>RESPONSÁVEL OPERACIONAL / BOMBEIRO LÍDER</strong>
-                      <span>Fiscalização de Brigada · SBGL Galeão</span>
-                    </div>
-                    <div className="pdf-signature-box">
-                      <div className="pdf-signature-line" />
-                      <strong>COORDENAÇÃO DE SEGURANÇA E EMERGÊNCIA</strong>
-                      <span>ENSEG Vigilância e Segurança Operacional</span>
-                    </div>
-                  </div>
+                  <PdfSignatures />
                 </>
               )}
 
@@ -1839,20 +1808,7 @@ function PdfReportModal({
                   </table>
 
                   {/* Se for a última página da tabela no modo sintético, insere as assinaturas */}
-                  {reportType === "synthetic" && isLastTablePage && (
-                    <div className="pdf-signatures-grid" style={{ marginTop: "auto", paddingTop: "14px" }}>
-                      <div className="pdf-signature-box">
-                        <div className="pdf-signature-line" />
-                        <strong>RESPONSÁVEL OPERACIONAL / BOMBEIRO LÍDER</strong>
-                        <span>Fiscalização de Brigada · SBGL Galeão</span>
-                      </div>
-                      <div className="pdf-signature-box">
-                        <div className="pdf-signature-line" />
-                        <strong>COORDENAÇÃO DE SEGURANÇA E EMERGÊNCIA</strong>
-                        <span>ENSEG Vigilância e Segurança Operacional</span>
-                      </div>
-                    </div>
-                  )}
+                  {reportType === "synthetic" && isLastTablePage && <PdfSignatures />}
 
                   {/* Se for modo analítico mas não houver ocorrências, assinaturas vão aqui */}
                   {reportType === "analytical" && isLastTablePage && occurrenceChunks.length === 0 && (
@@ -1860,18 +1816,7 @@ function PdfReportModal({
                       <div style={{ marginTop: "16px", padding: "12px", background: "#edf8f2", border: "1px solid #cce2d8", borderRadius: "4px", fontSize: "11px", color: "#138b60" }}>
                         ✓ Nenhuma não conformidade registrada nas vistorias deste período. Operação 100% conforme.
                       </div>
-                      <div className="pdf-signatures-grid" style={{ marginTop: "auto", paddingTop: "14px" }}>
-                        <div className="pdf-signature-box">
-                          <div className="pdf-signature-line" />
-                          <strong>RESPONSÁVEL OPERACIONAL / BOMBEIRO LÍDER</strong>
-                          <span>Fiscalização de Brigada · SBGL Galeão</span>
-                        </div>
-                        <div className="pdf-signature-box">
-                          <div className="pdf-signature-line" />
-                          <strong>COORDENAÇÃO DE SEGURANÇA E EMERGÊNCIA</strong>
-                          <span>ENSEG Vigilância e Segurança Operacional</span>
-                        </div>
-                      </div>
+                      <PdfSignatures />
                     </>
                   )}
                 </div>
@@ -1948,20 +1893,7 @@ function PdfReportModal({
                     </div>
 
                     {/* Na última página analítica, insere as assinaturas oficiais */}
-                    {isLastAnalyticalPage && (
-                      <div className="pdf-signatures-grid" style={{ marginTop: "auto", paddingTop: "14px" }}>
-                        <div className="pdf-signature-box">
-                          <div className="pdf-signature-line" />
-                          <strong>RESPONSÁVEL OPERACIONAL / BOMBEIRO LÍDER</strong>
-                          <span>Fiscalização de Brigada · SBGL Galeão</span>
-                        </div>
-                        <div className="pdf-signature-box">
-                          <div className="pdf-signature-line" />
-                          <strong>COORDENAÇÃO DE SEGURANÇA E EMERGÊNCIA</strong>
-                          <span>ENSEG Vigilância e Segurança Operacional</span>
-                        </div>
-                      </div>
-                    )}
+                    {isLastAnalyticalPage && <PdfSignatures />}
                   </div>
 
                   <div className="pdf-page-footer">
