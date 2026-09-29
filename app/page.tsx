@@ -136,15 +136,56 @@ export default function Home() {
 
   const firefighter = people.find((person) => person.name === operator) ?? people[0];
 
+  const fetchAllOperationalRounds = async () => {
+    if (!supabase) return { data: null, error: null };
+    const allRows: Round[] = [];
+    let from = 0;
+    const batchSize = 1000;
+    let hasMore = true;
+    let fetchError: any = null;
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from("operational_rounds")
+        .select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,created_at")
+        .order("created_at", { ascending: false })
+        .range(from, from + batchSize - 1);
+
+      if (error) {
+        fetchError = error;
+        break;
+      }
+
+      if (data && data.length > 0) {
+        allRows.push(...(data as Round[]));
+        if (data.length < batchSize) {
+          hasMore = false;
+        } else {
+          from += batchSize;
+        }
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return { data: allRows.length > 0 ? allRows : (fetchError ? null : []), error: fetchError };
+  };
+
   const fetchData = async () => {
     if (!supabase) return { people: null, rounds: null, notifications: null, settings: null, error: null };
-    const [p, r, n, s] = await Promise.all([
+    const [p, rResult, n, s] = await Promise.all([
       supabase.from("firefighters").select("id,name,shift,tps_team,teca_team,hangar_united_team,active").order("name"),
-      supabase.from("operational_rounds").select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,created_at").order("created_at", { ascending: false }).limit(50),
+      fetchAllOperationalRounds(),
       supabase.from("admin_notifications").select("id,round_id,title,message,acknowledged_at,created_at").is("acknowledged_at", null).order("created_at", { ascending: false }),
       supabase.from("notification_settings").select("recipient_emails").eq("id", true).maybeSingle()
     ]);
-    return { people: p.data as Firefighter[] | null, rounds: r.data as Round[] | null, notifications: n.data as AdminNotification[] | null, settings: s.data as { recipient_emails: string[] } | null, error: p.error ?? r.error ?? n.error ?? s.error };
+    return {
+      people: p.data as Firefighter[] | null,
+      rounds: rResult.data as Round[] | null,
+      notifications: n.data as AdminNotification[] | null,
+      settings: s.data as { recipient_emails: string[] } | null,
+      error: p.error ?? rResult.error ?? n.error ?? s.error
+    };
   };
 
   const applyData = async () => {
@@ -1953,6 +1994,8 @@ function Reports({
   const [endDate, setEndDate] = useState("");
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [selectedRound, setSelectedRound] = useState<Round | null>(null);
+  const [pageSize, setPageSize] = useState<number | "all">("all");
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Extrair nomes únicos de bombeiros
   const firefighterOptions = useMemo(() => {
@@ -2054,6 +2097,18 @@ function Reports({
   const totalOccurrences = filteredRounds.reduce((acc, r) => acc + r.non_conformities, 0);
   const totalApproved = filteredRounds.filter((r) => r.status === "Aprovado").length;
 
+  // Resetar página quando filtros mudarem
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, firefighterFilter, shiftFilter, statusFilter, stationFilter, startDate, endDate, pageSize]);
+
+  const totalPages = pageSize === "all" ? 1 : Math.ceil(filteredRounds.length / pageSize);
+  const displayedRounds = useMemo(() => {
+    if (pageSize === "all") return filteredRounds;
+    const start = (currentPage - 1) * pageSize;
+    return filteredRounds.slice(start, start + pageSize);
+  }, [filteredRounds, pageSize, currentPage]);
+
   return (
     <div className="content">
       <section className="section-head">
@@ -2068,7 +2123,11 @@ function Reports({
 
       {/* Cards de Resumo dos Relatórios Filtrados */}
       <div className="stats" style={{ marginBottom: "20px" }}>
-        <Metric label="TOTAL DE RONDAS AUDITADAS" value={totalRounds.toString()} detail="Vistorias no filtro ativo" />
+        <Metric
+          label="TOTAL DE RONDAS REGISTRADAS"
+          value={totalRounds.toString()}
+          detail={hasActiveFilters ? "Vistorias no filtro ativo" : "Total histórico no banco de dados"}
+        />
         <Metric
           label="MÉDIA DE CONFORMIDADE"
           value={`${avgConformity}%`}
@@ -2257,9 +2316,38 @@ function Reports({
             )}
             {searchTerm && <span className="filter-pill">🔍 &ldquo;{searchTerm}&rdquo;</span>}
           </div>
-          <span>
-            Exibindo <strong>{filteredRounds.length}</strong> de <strong>{rounds.length}</strong> vistorias
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <span>
+              Exibindo <strong>{pageSize === "all" ? filteredRounds.length : `${displayedRounds.length} de ${filteredRounds.length}`}</strong> ({rounds.length} no banco)
+            </span>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", background: "var(--bg)", padding: "2px 6px", borderRadius: "6px", border: "1px solid var(--line)" }}>
+              <span style={{ color: "var(--muted)" }}>Itens:</span>
+              <button
+                type="button"
+                className={`preset-chip ${pageSize === "all" ? "active" : ""}`}
+                style={{ padding: "2px 6px", fontSize: "10px", height: "auto" }}
+                onClick={() => setPageSize("all")}
+              >
+                Todas ({filteredRounds.length})
+              </button>
+              <button
+                type="button"
+                className={`preset-chip ${pageSize === 50 ? "active" : ""}`}
+                style={{ padding: "2px 6px", fontSize: "10px", height: "auto" }}
+                onClick={() => setPageSize(50)}
+              >
+                50
+              </button>
+              <button
+                type="button"
+                className={`preset-chip ${pageSize === 100 ? "active" : ""}`}
+                style={{ padding: "2px 6px", fontSize: "10px", height: "auto" }}
+                onClick={() => setPageSize(100)}
+              >
+                100
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2273,8 +2361,8 @@ function Reports({
           <span>AÇÃO</span>
         </div>
 
-        {filteredRounds.length ? (
-          filteredRounds.map((round) => {
+        {displayedRounds.length ? (
+          displayedRounds.map((round) => {
             const tone = round.status === "Aprovado" ? "good" : round.status === "Ocorrência" ? "danger" : "warn";
             return (
               <div
@@ -2315,6 +2403,43 @@ function Reports({
         ) : (
           <div className="empty-line" style={{ padding: "24px", textAlign: "center" }}>
             Nenhum relatório encontrado para os filtros selecionados.
+          </div>
+        )}
+
+        {pageSize !== "all" && totalPages > 1 && (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "12px 16px",
+              borderTop: "1px solid var(--line)",
+              background: "#fafafa"
+            }}
+          >
+            <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+              Página {currentPage} de {totalPages} (Mostrando {displayedRounds.length} de {filteredRounds.length} vistorias)
+            </span>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button
+                type="button"
+                className="secondary"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                style={{ padding: "5px 12px", fontSize: "12px" }}
+              >
+                ← Anterior
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                style={{ padding: "5px 12px", fontSize: "12px" }}
+              >
+                Próxima →
+              </button>
+            </div>
           </div>
         )}
       </div>
