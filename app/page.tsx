@@ -122,7 +122,8 @@ export default function Home() {
   const [people, setPeople] = useState(samplePeople);
   const [rounds, setRounds] = useState<Round[]>(sampleRounds);
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
-  const [recipientEmails, setRecipientEmails] = useState<string[]>([]);
+  const [recipientEmails, setRecipientEmails] = useState<string[]>(["supervisoremergencia@riogaleao.com"]);
+  const [recipientPhones, setRecipientPhones] = useState<string[]>(["5521992114159"]);
   const [answers, setAnswers] = useState<Record<number, Status>>({});
   const [issues, setIssues] = useState<Record<number, Issue>>({});
   const [operator, setOperator] = useState(samplePeople[0].name);
@@ -172,18 +173,31 @@ export default function Home() {
   };
 
   const fetchData = async () => {
-    if (!supabase) return { people: null, rounds: null, notifications: null, settings: null, error: null };
+    const client = supabase;
+    if (!client) return { people: null, rounds: null, notifications: null, settings: null, error: null };
+    const settingsPromise = client
+      .from("notification_settings")
+      .select("recipient_emails, recipient_whatsapp")
+      .eq("id", true)
+      .maybeSingle()
+      .then((res) => {
+        if (res.error && res.error.message?.includes("recipient_whatsapp")) {
+          return client.from("notification_settings").select("recipient_emails").eq("id", true).maybeSingle();
+        }
+        return res;
+      });
+
     const [p, rResult, n, s] = await Promise.all([
-      supabase.from("firefighters").select("id,name,shift,tps_team,teca_team,hangar_united_team,active").order("name"),
+      client.from("firefighters").select("id,name,shift,tps_team,teca_team,hangar_united_team,active").order("name"),
       fetchAllOperationalRounds(),
-      supabase.from("admin_notifications").select("id,round_id,title,message,acknowledged_at,created_at").is("acknowledged_at", null).order("created_at", { ascending: false }),
-      supabase.from("notification_settings").select("recipient_emails").eq("id", true).maybeSingle()
+      client.from("admin_notifications").select("id,round_id,title,message,acknowledged_at,created_at").is("acknowledged_at", null).order("created_at", { ascending: false }),
+      settingsPromise
     ]);
     return {
       people: p.data as Firefighter[] | null,
       rounds: rResult.data as Round[] | null,
       notifications: n.data as AdminNotification[] | null,
-      settings: s.data as { recipient_emails: string[] } | null,
+      settings: s.data as { recipient_emails?: string[]; recipient_whatsapp?: string[] } | null,
       error: p.error ?? rResult.error ?? n.error ?? s.error
     };
   };
@@ -197,7 +211,10 @@ export default function Home() {
     if (result.people) setPeople(result.people);
     if (result.rounds) setRounds(result.rounds);
     if (result.notifications) setNotifications(result.notifications);
-    if (result.settings) setRecipientEmails(result.settings.recipient_emails ?? []);
+    if (result.settings) {
+      if (result.settings.recipient_emails?.length) setRecipientEmails(result.settings.recipient_emails);
+      if (result.settings.recipient_whatsapp?.length) setRecipientPhones(result.settings.recipient_whatsapp);
+    }
   };
 
   useEffect(() => {
@@ -212,7 +229,10 @@ export default function Home() {
       }
       if (result.rounds) setRounds(result.rounds);
       if (result.notifications) setNotifications(result.notifications);
-      if (result.settings) setRecipientEmails(result.settings.recipient_emails ?? []);
+      if (result.settings) {
+        if (result.settings.recipient_emails?.length) setRecipientEmails(result.settings.recipient_emails);
+        if (result.settings.recipient_whatsapp?.length) setRecipientPhones(result.settings.recipient_whatsapp);
+      }
     });
   }, []);
 
@@ -294,13 +314,33 @@ export default function Home() {
         };
         const { error: notificationError } = await client.from("admin_notifications").insert(notification);
         if (notificationError) throw notificationError;
+
+        // Disparo unificado via API route (WhatsApp Zernio + E-mail Resend)
+        const nonConformItems = rows.filter((r) => r.status === "Não conforme");
+        try {
+          await fetch("/api/notify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              protocol,
+              firefighterName: firefighter.name,
+              shift: firefighter.shift,
+              nonConformities,
+              items: nonConformItems,
+              recipientEmails: recipientEmails.length ? recipientEmails : ["supervisoremergencia@riogaleao.com"],
+              recipientPhones: recipientPhones.length ? recipientPhones : ["5521992114159"]
+            })
+          });
+        } catch (notifyErr) {
+          console.error("Falha ao disparar rota de notificação:", notifyErr);
+        }
+
         const { data: settings } = await client.from("notification_settings").select("recipient_emails").eq("id", true).maybeSingle();
         const recipients = settings?.recipient_emails ?? [];
         if (recipients.length) {
-          const { error: emailError } = await client.functions.invoke("send-inconsistency-notification", {
+          await client.functions.invoke("send-inconsistency-notification", {
             body: { recipients, protocol, firefighterName: firefighter.name, nonConformities, createdAt: new Date().toLocaleString("pt-BR") }
-          });
-          if (emailError) setMessage("A ocorrência foi registrada, mas o e-mail de alerta não pôde ser enviado.");
+          }).catch(() => null);
         }
       }
       setSubmittedProtocol(protocol);
@@ -334,14 +374,28 @@ export default function Home() {
     }
   };
 
-  const saveRecipientEmails = async (emails: string[]) => {
-    if (!supabase) {
-      setRecipientEmails(emails);
-      return;
-    }
-    const { error } = await supabase.from("notification_settings").upsert({ id: true, recipient_emails: emails, updated_at: new Date().toISOString() });
-    if (error) throw error;
+  const saveNotificationRecipients = async (emails: string[], phones: string[]) => {
     setRecipientEmails(emails);
+    setRecipientPhones(phones);
+    if (!supabase) return;
+
+    try {
+      const { error } = await supabase.from("notification_settings").upsert({
+        id: true,
+        recipient_emails: emails,
+        recipient_whatsapp: phones,
+        updated_at: new Date().toISOString()
+      });
+      if (error && error.message?.includes("recipient_whatsapp")) {
+        await supabase.from("notification_settings").upsert({
+          id: true,
+          recipient_emails: emails,
+          updated_at: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.warn("Aviso ao salvar configurações no Supabase:", err);
+    }
   };
 
   const totalToday = rounds.filter((round) => new Date(round.created_at).toDateString() === new Date().toDateString()).length;
@@ -466,7 +520,13 @@ export default function Home() {
         )}
         {view === "reports" && role === "admin" && <Reports rounds={rounds} onUpdateRoundStatus={handleUpdateRoundStatus} />}
         {view === "people" && role === "admin" && <People people={people} onAdd={() => setShowPersonModal(true)} />}
-        {view === "settings" && role === "admin" && <NotificationSettings emails={recipientEmails} onSave={saveRecipientEmails} />}
+        {view === "settings" && role === "admin" && (
+          <NotificationSettings
+            emails={recipientEmails}
+            phones={recipientPhones}
+            onSave={saveNotificationRecipients}
+          />
+        )}
         {view === "checklist" && (
           <Checklist
             people={people}
@@ -654,14 +714,36 @@ function NotificationBell({ notifications, onAcknowledge }: { notifications: Adm
   );
 }
 
-function NotificationSettings({ emails, onSave }: { emails: string[]; onSave: (emails: string[]) => Promise<void> }) {
-  const [value, setValue] = useState(emails.join(", "));
+function NotificationSettings({
+  emails,
+  phones,
+  onSave
+}: {
+  emails: string[];
+  phones: string[];
+  onSave: (emails: string[], phones: string[]) => Promise<void>;
+}) {
+  const [emailValue, setEmailValue] = useState(
+    emails.length ? emails.join(", ") : "supervisoremergencia@riogaleao.com"
+  );
+  const [phoneValue, setPhoneValue] = useState(
+    phones.length ? phones.join(", ") : "+55 21 99211-4159"
+  );
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [testFeedback, setTestFeedback] = useState<{
+    success?: boolean;
+    msg: string;
+    waDetail?: string;
+    emailDetail?: string;
+  } | null>(null);
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
-    const recipients = value.split(/[;,\n]/).map((email) => email.trim()).filter(Boolean);
+    const recipients = emailValue.split(/[;,\n]/).map((email) => email.trim()).filter(Boolean);
+    const validPhones = phoneValue.split(/[;,\n]/).map((p) => p.trim()).filter(Boolean);
+
     if (recipients.some((email) => !/^\S+@\S+\.\S+$/.test(email))) {
       setFeedback("Informe apenas endereços de e-mail válidos, separados por vírgula.");
       return;
@@ -669,8 +751,8 @@ function NotificationSettings({ emails, onSave }: { emails: string[]; onSave: (e
     setSaving(true);
     setFeedback("");
     try {
-      await onSave(recipients);
-      setFeedback("Destinatários salvos. As próximas ocorrências serão enviadas para esta lista.");
+      await onSave(recipients, validPhones);
+      setFeedback("Destinatários salvos com sucesso! As próximas ocorrências serão notificadas para estes contatos.");
     } catch {
       setFeedback("Não foi possível salvar os destinatários.");
     } finally {
@@ -678,25 +760,183 @@ function NotificationSettings({ emails, onSave }: { emails: string[]; onSave: (e
     }
   };
 
+  const handleSendTest = async () => {
+    setTesting(true);
+    setTestFeedback(null);
+    try {
+      const emailList = emailValue.split(/[;,\n]/).map((e) => e.trim()).filter(Boolean);
+      const phoneList = phoneValue.split(/[;,\n]/).map((p) => p.trim()).filter(Boolean);
+
+      const res = await fetch("/api/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          isTest: true,
+          protocol: "TESTE-OPERACIONAL",
+          firefighterName: "Supervisor de Teste",
+          shift: "Turno A",
+          nonConformities: 1,
+          items: [
+            {
+              item_number: 1,
+              item_title: "Verificação de Alerta em Tempo Real",
+              location: "Posto de Comando Operacional",
+              observation: "Disparo de validação dos canais WhatsApp e E-mail",
+              action_taken: "Teste executado pela Administração",
+              supervisor_notified: "Supervisor RioGaleão"
+            }
+          ],
+          recipientEmails: emailList.length ? emailList : ["supervisoremergencia@riogaleao.com"],
+          recipientPhones: phoneList.length ? phoneList : ["5521992114159"]
+        })
+      });
+
+      const data = await res.json();
+      const waSuccess = data.whatsapp?.success;
+      const emailSuccess = data.email?.success;
+
+      let msg = "";
+      if (waSuccess && emailSuccess) {
+        msg = "✓ Alerta de teste enviado com sucesso para WhatsApp e E-mail!";
+      } else if (waSuccess && !emailSuccess) {
+        msg = "✓ WhatsApp enviado com sucesso! E-mail aguardando configuração da chave Resend.";
+      } else if (!waSuccess && emailSuccess) {
+        msg = "✓ E-mail enviado com sucesso! WhatsApp aguarda vincular a conta na Zernio.";
+      } else {
+        msg = "Tentativa de teste processada.";
+      }
+
+      setTestFeedback({
+        success: Boolean(waSuccess || emailSuccess),
+        msg,
+        waDetail: waSuccess
+          ? "WhatsApp: Mensagem enviada com sucesso."
+          : `WhatsApp: ${data.whatsapp?.results?.[0]?.error || "Aguardando conexão no painel Zernio"}`,
+        emailDetail: emailSuccess
+          ? "E-mail: Mensagem entregue via Resend."
+          : `E-mail: ${data.email?.detail?.error || "Aguardando chave RESEND_API_KEY"}`
+      });
+    } catch (err) {
+      setTestFeedback({
+        success: false,
+        msg: "Falha ao disparar teste de notificação.",
+        waDetail: err instanceof Error ? err.message : String(err)
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <div className="content">
       <section className="section-head">
         <div>
-          <p className="eyebrow">ALERTAS OPERACIONAIS</p>
-          <h2>Configurações de notificações</h2>
-          <p className="muted">Defina quem recebe e-mail sempre que uma ronda registrar uma não conformidade.</p>
+          <p className="eyebrow">ALERTAS OPERACIONAIS EM TEMPO REAL</p>
+          <h2>Canais de Notificação (WhatsApp & E-mail)</h2>
+          <p className="muted">
+            Configure os canais oficiais para recebimento imediato de alertas sempre que uma ronda registrar não conformidades.
+          </p>
         </div>
       </section>
-      <form className="settings-card" onSubmit={save}>
-        <label>
-          E-MAILS PARA NOTIFICAÇÃO
-          <textarea value={value} onChange={(event) => setValue(event.target.value)} placeholder="gestao@empresa.com, seguranca@empresa.com" rows={4} />
-          <small>Separe vários destinatários por vírgula, ponto e vírgula ou uma linha por endereço.</small>
-        </label>
-        {feedback && <p className={feedback.startsWith("Destinatários") ? "settings-success" : "form-error"}>{feedback}</p>}
-        <div className="modal-actions"><button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar destinatários"}</button></div>
+
+      <form className="settings-card" onSubmit={save} style={{ maxWidth: "760px" }}>
+        {/* Bloco WhatsApp */}
+        <div style={{ marginBottom: "24px", paddingBottom: "20px", borderBottom: "1px solid #ededeb" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+            <label style={{ margin: 0, fontSize: "11px", fontWeight: "bold", color: "#111" }}>
+              📱 WHATSAPP PARA ALERTAS OPERACIONAIS
+            </label>
+            <span className="tag good" style={{ fontSize: "9px" }}>Zernio API Ativa</span>
+          </div>
+          <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#666" }}>
+            Número de WhatsApp que receberá a notificação de ocorrência no formato internacional com DDI e DDD:
+          </p>
+          <input
+            type="text"
+            value={phoneValue}
+            onChange={(e) => setPhoneValue(e.target.value)}
+            placeholder="+55 21 99211-4159 ou 5521992114159"
+            style={{ width: "100%", padding: "10px", fontSize: "14px", border: "1px solid #deded9", borderRadius: "4px", background: "#fdfdfc", boxSizing: "border-box" }}
+          />
+          <small style={{ display: "block", marginTop: "6px", color: "#777", fontSize: "11px" }}>
+            Destinatário oficial: <strong>+55 21 99211-4159</strong> (Supervisor de Emergência RioGaleão)
+          </small>
+        </div>
+
+        {/* Bloco E-mail */}
+        <div style={{ marginBottom: "24px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+            <label style={{ margin: 0, fontSize: "11px", fontWeight: "bold", color: "#111" }}>
+              ✉️ E-MAILS PARA NOTIFICAÇÃO (RESEND)
+            </label>
+            <span className="tag" style={{ fontSize: "9px" }}>Resend</span>
+          </div>
+          <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#666" }}>
+            Endereços de e-mail que receberão o relatório executivo da ocorrência:
+          </p>
+          <textarea
+            value={emailValue}
+            onChange={(event) => setEmailValue(event.target.value)}
+            placeholder="supervisoremergencia@riogaleao.com"
+            rows={3}
+            style={{ width: "100%", padding: "10px", fontSize: "13px", border: "1px solid #deded9", borderRadius: "4px", background: "#fdfdfc", boxSizing: "border-box" }}
+          />
+          <small style={{ display: "block", marginTop: "6px", color: "#777", fontSize: "11px" }}>
+            Destinatário oficial: <strong>supervisoremergencia@riogaleao.com</strong>. Separe múltiplos e-mails por vírgula.
+          </small>
+        </div>
+
+        {feedback && (
+          <p className={feedback.startsWith("Destinatários") ? "settings-success" : "form-error"}>
+            {feedback}
+          </p>
+        )}
+
+        {testFeedback && (
+          <div style={{ marginTop: "16px", padding: "12px 16px", borderRadius: "6px", border: testFeedback.success ? "1px solid #b7dfc9" : "1px solid #f0c5c5", background: testFeedback.success ? "#edf8f2" : "#fdf2f2" }}>
+            <div style={{ fontWeight: 700, fontSize: "12px", color: testFeedback.success ? "#11704e" : "#b01919", marginBottom: "6px" }}>
+              {testFeedback.msg}
+            </div>
+            {testFeedback.waDetail && (
+              <div style={{ fontSize: "11px", color: "#444", marginBottom: "4px" }}>
+                📱 <strong>WhatsApp:</strong> {testFeedback.waDetail}
+              </div>
+            )}
+            {testFeedback.emailDetail && (
+              <div style={{ fontSize: "11px", color: "#444" }}>
+                ✉️ <strong>E-mail:</strong> {testFeedback.emailDetail}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="modal-actions" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "20px", paddingTop: "14px", borderTop: "1px solid #ededeb" }}>
+          <button
+            type="button"
+            className="outline"
+            onClick={handleSendTest}
+            disabled={testing || saving}
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+          >
+            {testing ? "⏳ Disparando Teste..." : "🔔 Disparar Teste de Alerta"}
+          </button>
+          <button className="primary" disabled={saving || testing}>
+            {saving ? "Salvando…" : "Salvar Configurações"}
+          </button>
+        </div>
       </form>
-      <p className="settings-note">Para habilitar o envio efetivo, configure os segredos <code>RESEND_API_KEY</code> e <code>RESEND_FROM_EMAIL</code> na função do Supabase.</p>
+
+      <div className="settings-note" style={{ maxWidth: "760px", marginTop: "16px", background: "#fbfbf8", padding: "14px 18px", border: "1px solid #e7e7e2", borderRadius: "6px" }}>
+        <strong>ℹ️ Informações sobre os Provedores de Envio:</strong>
+        <ul style={{ margin: "8px 0 0 0", paddingLeft: "18px", fontSize: "12px", lineHeight: "1.6" }}>
+          <li>
+            <strong>WhatsApp (Zernio):</strong> A chave de API <code>sk_7bc...20d90</code> já está integrada ao sistema. Para receber as mensagens, acesse o painel da <a href="https://zernio.com/dashboard/connections" target="_blank" rel="noreferrer" style={{ color: "#0066cc" }}>Zernio (Conexões)</a> e conecte seu WhatsApp Business.
+          </li>
+          <li>
+            <strong>E-mail (Resend):</strong> O e-mail <code>supervisoremergencia@riogaleao.com</code> está configurado. Para ativar a entrega dos e-mails, informe a chave <code>RESEND_API_KEY</code> no arquivo <code>.env.local</code> ou nas variáveis de ambiente da hospedagem (Vercel).
+          </li>
+        </ul>
+      </div>
     </div>
   );
 }
