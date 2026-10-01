@@ -310,7 +310,12 @@ async function sendViaResend({
 
     if (!res.ok) {
       const errText = await res.text();
-      return { success: false, error: `Falha ao enviar via Resend (${res.status}): ${errText}` };
+      let errorMsg = `Falha ao enviar via Resend (${res.status}): ${errText}`;
+      try {
+        const parsed = JSON.parse(errText);
+        if (parsed.message) errorMsg = parsed.message;
+      } catch {}
+      return { success: false, error: errorMsg };
     }
 
     const data = await res.json();
