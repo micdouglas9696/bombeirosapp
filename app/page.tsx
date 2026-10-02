@@ -9,7 +9,7 @@ type Status = "Conforme" | "Não conforme" | "N/A";
 type Team = "Alfa" | "Bravo" | "Charlie" | "Delta";
 type Priority = "Baixa" | "Média" | "Alta" | "Crítica";
 type Firefighter = { id?: string; name: string; shift: "Diurno" | "Noturno"; tps_team: Team; teca_team: Team; hangar_united_team: Team; active: boolean };
-type Round = { id: string; protocol: string; firefighter_name: string; shift: string; tps_team: string; teca_team: string; hangar_united_team: string; conformity: number; non_conformities: number; status: "Em análise" | "Aprovado" | "Ocorrência"; created_at: string };
+type Round = { id: string; protocol: string; firefighter_id?: string | null; firefighter_name: string; shift: string; tps_team: string; teca_team: string; hangar_united_team: string; conformity: number; non_conformities: number; status: "Em análise" | "Aprovado" | "Ocorrência"; created_at: string };
 type Issue = { location: string; observation: string; priority: Priority; action_taken: string; supervisor_notified: string; ss_number: string; photo: File | null };
 type AdminNotification = { id: string; round_id: string; title: string; message: string; acknowledged_at: string | null; created_at: string };
 
@@ -29,7 +29,7 @@ const sampleRounds: Round[] = [
     tps_team: "Alfa",
     teca_team: "Alfa",
     hangar_united_team: "Alfa",
-    conformity: 95,
+    conformity: 94,
     non_conformities: 1,
     status: "Ocorrência",
     created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString()
@@ -45,7 +45,7 @@ const sampleRounds: Round[] = [
     conformity: 100,
     non_conformities: 0,
     status: "Aprovado",
-    created_at: new Date(Date.now() - 8 * 3600 * 1000).toISOString()
+    created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString()
   },
   {
     id: "rnd-3",
@@ -55,10 +55,10 @@ const sampleRounds: Round[] = [
     tps_team: "Charlie",
     teca_team: "Charlie",
     hangar_united_team: "Charlie",
-    conformity: 90,
+    conformity: 89,
     non_conformities: 2,
     status: "Ocorrência",
-    created_at: new Date(Date.now() - 26 * 3600 * 1000).toISOString()
+    created_at: new Date(Date.now() - 9 * 3600 * 1000).toISOString()
   },
   {
     id: "rnd-4",
@@ -71,7 +71,7 @@ const sampleRounds: Round[] = [
     conformity: 100,
     non_conformities: 0,
     status: "Aprovado",
-    created_at: new Date(Date.now() - 4 * 24 * 3600 * 1000).toISOString()
+    created_at: new Date(Date.now() - 13 * 3600 * 1000).toISOString()
   },
   {
     id: "rnd-5",
@@ -81,10 +81,10 @@ const sampleRounds: Round[] = [
     tps_team: "Bravo",
     teca_team: "Bravo",
     hangar_united_team: "Bravo",
-    conformity: 85,
+    conformity: 83,
     non_conformities: 3,
     status: "Em análise",
-    created_at: new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString()
+    created_at: new Date(Date.now() - 17 * 3600 * 1000).toISOString()
   },
   {
     id: "rnd-6",
@@ -97,12 +97,42 @@ const sampleRounds: Round[] = [
     conformity: 100,
     non_conformities: 0,
     status: "Aprovado",
-    created_at: new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString()
+    created_at: new Date(Date.now() - 21 * 3600 * 1000).toISOString()
   }
 ];
 
+const sampleNotifications: AdminNotification[] = [
+  {
+    id: "notif-demo-1",
+    round_id: "rnd-1",
+    title: "Nova ocorrência operacional",
+    message: "1 não conformidade(s) registrada(s) na ronda RON-2026-A8F192C1, por Leandro Dantas dos Santos.",
+    acknowledged_at: null,
+    created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString()
+  },
+  {
+    id: "notif-demo-3",
+    round_id: "rnd-3",
+    title: "Nova ocorrência operacional",
+    message: "2 não conformidade(s) registrada(s) na ronda RON-2026-F9E341A0, por Carlos Eduardo Moreira.",
+    acknowledged_at: null,
+    created_at: new Date(Date.now() - 26 * 3600 * 1000).toISOString()
+  }
+];
+
+// Cache em memória para respostas e evidências em modo demo
+const demoAnswersMap = new Map<string, RoundAnswer[]>();
+
 const emptyIssue = (): Issue => ({ location: "", observation: "", priority: "Média", action_taken: "", supervisor_notified: "", ss_number: "", photo: null });
 const dateLabel = (value: string) => new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value)).replace(".", "");
+
+// Cálculo limpo de conformidade: Conformes / (Conformes + Ocorrências) * 100 (exclui N/A)
+const getRoundCleanConformity = (r: Round): number => {
+  if (r.non_conformities === 0) return 100;
+  const applicableItems = 18;
+  const conforms = Math.max(0, applicableItems - r.non_conformities);
+  return Math.round((conforms / (conforms + r.non_conformities)) * 100);
+};
 
 function Tag({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warn" | "danger" }) {
   return <span className={`tag ${tone}`}>{children}</span>;
@@ -119,9 +149,12 @@ const fileToBase64 = (file: File): Promise<string> =>
 export default function Home() {
   const [role, setRole] = useState<Role>(null);
   const [view, setView] = useState<View>("dashboard");
+  const [sessionLoaded, setSessionLoaded] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
   const [people, setPeople] = useState(samplePeople);
   const [rounds, setRounds] = useState<Round[]>(sampleRounds);
-  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [notifications, setNotifications] = useState<AdminNotification[]>(sampleNotifications);
   const [recipientEmails, setRecipientEmails] = useState<string[]>(["supervisoremergencia@riogaleao.com"]);
   const [recipientPhones, setRecipientPhones] = useState<string[]>(["5521992114159"]);
   const [answers, setAnswers] = useState<Record<number, Status>>({});
@@ -131,11 +164,63 @@ export default function Home() {
   const [showPersonModal, setShowPersonModal] = useState(false);
   const [showAdminAuthModal, setShowAdminAuthModal] = useState(false);
   const [showFirefighterIdentifyModal, setShowFirefighterIdentifyModal] = useState(false);
+  const [selectedRound, setSelectedRound] = useState<Round | null>(null);
+  const [selectedRoundTab, setSelectedRoundTab] = useState<"all" | "issues" | "conform">("all");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [submittedProtocol, setSubmittedProtocol] = useState<string | null>(null);
 
   const firefighter = people.find((person) => person.name === operator) ?? people[0];
+
+  const handleLoginAdmin = () => {
+    setShowAdminAuthModal(false);
+    setRole("admin");
+    setView("dashboard");
+    try {
+      localStorage.setItem("bombeiros_session_role", "admin");
+      localStorage.setItem("bombeiros_session_view", "dashboard");
+    } catch {}
+  };
+
+  const handleLoginFirefighter = (selectedName: string) => {
+    setOperator(selectedName);
+    setShowFirefighterIdentifyModal(false);
+    setRole("firefighter");
+    setView("checklist");
+    try {
+      localStorage.setItem("bombeiros_session_role", "firefighter");
+      localStorage.setItem("bombeiros_session_operator", selectedName);
+      localStorage.setItem("bombeiros_session_view", "checklist");
+    } catch {}
+  };
+
+  const handleNavigateView = (newView: View) => {
+    setView(newView);
+    try {
+      if (role) {
+        localStorage.setItem("bombeiros_session_view", newView);
+      }
+    } catch {}
+  };
+
+  const handleLogout = () => {
+    setRole(null);
+    setView("dashboard");
+    try {
+      localStorage.removeItem("bombeiros_session_role");
+      localStorage.removeItem("bombeiros_session_operator");
+      localStorage.removeItem("bombeiros_session_view");
+    } catch {}
+  };
+
+  const handleOperatorChange = (newOperator: string) => {
+    setOperator(newOperator);
+    if (role === "firefighter") {
+      try {
+        localStorage.setItem("bombeiros_session_operator", newOperator);
+      } catch {}
+    }
+  };
 
   const fetchAllOperationalRounds = async () => {
     if (!supabase) return { data: null, error: null };
@@ -202,30 +287,20 @@ export default function Home() {
     };
   };
 
-  const applyData = async () => {
-    const result = await fetchData();
-    if (result.error) {
-      setMessage("Não foi possível carregar os dados. Execute a migração do Supabase.");
-      return;
-    }
-    if (result.people) setPeople(result.people);
-    if (result.rounds) setRounds(result.rounds);
-    if (result.notifications) setNotifications(result.notifications);
-    if (result.settings) {
-      if (result.settings.recipient_emails?.length) setRecipientEmails(result.settings.recipient_emails);
-      if (result.settings.recipient_whatsapp?.length) setRecipientPhones(result.settings.recipient_whatsapp);
-    }
-  };
-
-  useEffect(() => {
-    void fetchData().then((result) => {
+  const applyData = async (silent = false) => {
+    if (!silent) setIsRefreshing(true);
+    try {
+      const result = await fetchData();
       if (result.error) {
-        setMessage("Não foi possível carregar os dados. Execute a migração do Supabase.");
+        if (!silent) setMessage("Não foi possível carregar os dados atualizados.");
         return;
       }
       if (result.people?.length) {
         setPeople(result.people);
-        setOperator(result.people[0].name);
+        setOperator((curr) => {
+          const saved = typeof window !== "undefined" ? localStorage.getItem("bombeiros_session_operator") : null;
+          return saved || curr || result.people![0].name;
+        });
       }
       if (result.rounds) setRounds(result.rounds);
       if (result.notifications) setNotifications(result.notifications);
@@ -233,12 +308,79 @@ export default function Home() {
         if (result.settings.recipient_emails?.length) setRecipientEmails(result.settings.recipient_emails);
         if (result.settings.recipient_whatsapp?.length) setRecipientPhones(result.settings.recipient_whatsapp);
       }
-    });
+      setLastSync(new Date());
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Restauração de sessão e carga inicial de dados
+  useEffect(() => {
+    try {
+      const savedRole = localStorage.getItem("bombeiros_session_role") as Role;
+      const savedOperator = localStorage.getItem("bombeiros_session_operator");
+      const savedView = localStorage.getItem("bombeiros_session_view") as View;
+
+      if (savedRole === "admin") {
+        setRole("admin");
+        if (savedView && ["dashboard", "reports", "people", "settings", "checklist"].includes(savedView)) {
+          setView(savedView);
+        } else {
+          setView("dashboard");
+        }
+      } else if (savedRole === "firefighter") {
+        setRole("firefighter");
+        setView("checklist");
+        if (savedOperator) {
+          setOperator(savedOperator);
+        }
+      }
+    } catch {}
+    setSessionLoaded(true);
+
+    void applyData(true);
+  }, []);
+
+  // Polling automático em segundo plano a cada 10 segundos
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void applyData(true);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Inscrição em tempo real no Supabase para sincronização instantânea
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel("realtime_bombeiros_app_sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "operational_rounds" }, () => {
+        void applyData(true);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "admin_notifications" }, () => {
+        void applyData(true);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "round_answers" }, () => {
+        void applyData(true);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "firefighters" }, () => {
+        void applyData(true);
+      })
+      .subscribe();
+
+    return () => {
+      supabase?.removeChannel(channel);
+    };
   }, []);
 
   const completed = Object.keys(answers).length;
   const nonConformities = Object.values(answers).filter((value) => value === "Não conforme").length;
-  const conformity = useMemo(() => completed ? Math.round((Object.values(answers).filter((value) => value === "Conforme").length / completed) * 100) : 0, [answers, completed]);
+  const conformCount = Object.values(answers).filter((value) => value === "Conforme").length;
+  const evaluatedCount = conformCount + nonConformities; // Exclui N/A: conformes vs ocorrências
+  const conformity = useMemo(() => {
+    if (evaluatedCount === 0) return completed > 0 ? 100 : 0;
+    return Math.round((conformCount / evaluatedCount) * 100);
+  }, [conformCount, evaluatedCount, completed]);
 
   const addPerson = async (person: Firefighter) => {
     if (!supabase) {
@@ -248,17 +390,112 @@ export default function Home() {
     const { data, error } = await supabase.from("firefighters").insert(person).select("id,name,shift,tps_team,teca_team,hangar_united_team,active").single();
     if (error) throw error;
     setPeople((current) => [...current, data as Firefighter]);
+    void applyData(true);
+  };
+
+  const handleOpenRound = (round: Round, tab: "all" | "issues" | "conform" = "all") => {
+    setSelectedRound(round);
+    setSelectedRoundTab(tab);
+  };
+
+  const handleOpenRoundById = async (roundId: string, tab: "all" | "issues" | "conform" = "issues") => {
+    const existing = rounds.find((r) => r.id === roundId);
+    if (existing) {
+      setSelectedRound(existing);
+      setSelectedRoundTab(tab);
+      return;
+    }
+    if (supabase) {
+      const { data } = await supabase
+        .from("operational_rounds")
+        .select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,created_at")
+        .eq("id", roundId)
+        .maybeSingle();
+      if (data) {
+        setSelectedRound(data as Round);
+        setSelectedRoundTab(tab);
+      }
+    }
   };
 
   const submitRound = async () => {
-    const client = supabase;
-    if (!client || !firefighter) {
-      setMessage("Configure o Supabase e selecione um bombeiro.");
+    if (!firefighter) {
+      setMessage("Selecione um bombeiro para registrar a ronda.");
       return;
     }
     setSaving(true);
     setMessage("");
     const protocol = `RON-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+
+    const client = supabase;
+    if (!client) {
+      // Modo demonstração offline / local
+      const demoId = `rnd-${Date.now()}`;
+      const newRound: Round = {
+        id: demoId,
+        protocol,
+        firefighter_id: firefighter.id ?? null,
+        firefighter_name: firefighter.name,
+        shift: firefighter.shift,
+        tps_team: firefighter.tps_team,
+        teca_team: firefighter.teca_team,
+        hangar_united_team: firefighter.hangar_united_team,
+        conformity,
+        non_conformities: nonConformities,
+        status: nonConformities ? "Ocorrência" : "Em análise",
+        created_at: new Date().toISOString()
+      };
+
+      const rows: RoundAnswer[] = await Promise.all(
+        checklistItems.map(async (item, index) => {
+          const issue = issues[index];
+          let photo_path: string | null = null;
+          if (answers[index] === "Não conforme" && issue?.photo) {
+            try {
+              photo_path = await fileToBase64(issue.photo);
+            } catch {
+              photo_path = null;
+            }
+          }
+          return {
+            round_id: demoId,
+            item_number: index + 1,
+            item_text: item,
+            status: answers[index] || "Conforme",
+            location: issue?.location || null,
+            observation: issue?.observation || null,
+            priority: answers[index] === "Não conforme" ? issue?.priority ?? "Média" : null,
+            action_taken: issue?.action_taken || null,
+            supervisor_notified: issue?.supervisor_notified || null,
+            ss_number: issue?.ss_number || null,
+            photo_path
+          };
+        })
+      );
+
+      demoAnswersMap.set(demoId, rows);
+      setRounds((prev) => [newRound, ...prev]);
+
+      if (nonConformities > 0) {
+        const newNotif: AdminNotification = {
+          id: crypto.randomUUID(),
+          round_id: demoId,
+          title: "Nova ocorrência operacional",
+          message: `${nonConformities} não conformidade(s) registrada(s) na ronda ${protocol}, por ${firefighter.name}.`,
+          acknowledged_at: null,
+          created_at: new Date().toISOString()
+        };
+        setNotifications((prev) => [newNotif, ...prev]);
+      }
+
+      setSubmittedProtocol(protocol);
+      setAnswers({});
+      setIssues({});
+      setFinalMessage("");
+      setSaving(false);
+      return;
+    }
+
     const { data: round, error } = await client.from("operational_rounds").insert({
       protocol,
       firefighter_id: firefighter.id ?? null,
@@ -284,11 +521,26 @@ export default function Home() {
         const issue = issues[index];
         let photo_path: string | null = null;
         if (answers[index] === "Não conforme" && issue?.photo) {
-          const extension = issue.photo.name.split(".").pop() || "jpg";
-          const path = `${round.id}/${index + 1}-${crypto.randomUUID()}.${extension}`;
-          const { error: uploadError } = await client.storage.from("round-evidence").upload(path, issue.photo, { contentType: issue.photo.type, upsert: false });
-          if (uploadError) throw uploadError;
-          photo_path = client.storage.from("round-evidence").getPublicUrl(path).data.publicUrl;
+          try {
+            const extension = issue.photo.name.split(".").pop() || "jpg";
+            const path = `${round.id}/${index + 1}-${crypto.randomUUID()}.${extension}`;
+            const { error: uploadError } = await client.storage
+              .from("round-evidence")
+              .upload(path, issue.photo, { contentType: issue.photo.type, upsert: false });
+            if (!uploadError) {
+              photo_path = client.storage.from("round-evidence").getPublicUrl(path).data.publicUrl;
+            } else {
+              console.warn("Storage upload falhou, salvando imagem Base64 como contingência:", uploadError);
+              photo_path = await fileToBase64(issue.photo);
+            }
+          } catch (storageErr) {
+            console.warn("Exceção ao subir foto para storage, gravando Base64:", storageErr);
+            try {
+              photo_path = await fileToBase64(issue.photo);
+            } catch {
+              photo_path = null;
+            }
+          }
         }
         return {
           round_id: round.id,
@@ -306,6 +558,10 @@ export default function Home() {
       }));
       const { error: answersError } = await client.from("round_answers").insert(rows);
       if (answersError) throw answersError;
+
+      // Armazena também em demoAnswersMap para acesso instantâneo no cliente
+      demoAnswersMap.set(round.id, rows);
+
       if (nonConformities > 0) {
         const notification = {
           round_id: round.id,
@@ -357,8 +613,12 @@ export default function Home() {
 
   const handleUpdateRoundStatus = async (roundId: string, newStatus: "Em análise" | "Aprovado" | "Ocorrência") => {
     setRounds((prev) => prev.map((r) => (r.id === roundId ? { ...r, status: newStatus } : r)));
+    if (selectedRound && selectedRound.id === roundId) {
+      setSelectedRound((curr) => (curr ? { ...curr, status: newStatus } : null));
+    }
     if (supabase) {
       await supabase.from("operational_rounds").update({ status: newStatus }).eq("id", roundId);
+      void applyData(true);
     }
   };
 
@@ -369,8 +629,8 @@ export default function Home() {
       const { error } = await supabase.from("admin_notifications").update({ acknowledged_at: acknowledgedAt }).eq("id", notificationId);
       if (error) {
         setMessage("Não foi possível confirmar a ciência da ocorrência.");
-        await applyData();
       }
+      void applyData(true);
     }
   };
 
@@ -393,13 +653,25 @@ export default function Home() {
           updated_at: new Date().toISOString()
         });
       }
+      void applyData(true);
     } catch (err) {
       console.warn("Aviso ao salvar configurações no Supabase:", err);
     }
   };
 
   const totalToday = rounds.filter((round) => new Date(round.created_at).toDateString() === new Date().toDateString()).length;
-  const average = rounds.length ? `${(rounds.reduce((sum, round) => sum + round.conformity, 0) / rounds.length).toFixed(1).replace(".", ",")}%` : "—";
+  const average = rounds.length ? `${(rounds.reduce((sum, round) => sum + getRoundCleanConformity(round), 0) / rounds.length).toFixed(1).replace(".", ",")}%` : "—";
+
+  if (!sessionLoaded) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#0e0f11", color: "#888" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
+          <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" style={{ height: "46px", objectFit: "contain" }} />
+          <span style={{ fontSize: "11px", letterSpacing: "1.2px", color: "#8c8d91" }}>INICIANDO SISTEMA...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (!role) {
     return (
@@ -411,23 +683,14 @@ export default function Home() {
         {showAdminAuthModal && (
           <AdminAuthModal
             onClose={() => setShowAdminAuthModal(false)}
-            onSuccess={() => {
-              setShowAdminAuthModal(false);
-              setRole("admin");
-              setView("dashboard");
-            }}
+            onSuccess={handleLoginAdmin}
           />
         )}
         {showFirefighterIdentifyModal && (
           <FirefighterIdentifyModal
             people={people}
             onClose={() => setShowFirefighterIdentifyModal(false)}
-            onConfirm={(selectedName) => {
-              setOperator(selectedName);
-              setShowFirefighterIdentifyModal(false);
-              setRole("firefighter");
-              setView("checklist");
-            }}
+            onConfirm={handleLoginFirefighter}
           />
         )}
       </>
@@ -447,25 +710,25 @@ export default function Home() {
         <nav>
           {role === "admin" ? (
             <>
-              <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>
+              <button className={view === "dashboard" ? "active" : ""} onClick={() => handleNavigateView("dashboard")}>
                 ▦ Visão geral
               </button>
-              <button className={view === "reports" ? "active" : ""} onClick={() => setView("reports")}>
+              <button className={view === "reports" ? "active" : ""} onClick={() => handleNavigateView("reports")}>
                 ▤ Relatórios
               </button>
-              <button className={view === "people" ? "active" : ""} onClick={() => setView("people")}>
+              <button className={view === "people" ? "active" : ""} onClick={() => handleNavigateView("people")}>
                 ♙ Bombeiros
               </button>
-              <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+              <button className={view === "settings" ? "active" : ""} onClick={() => handleNavigateView("settings")}>
                 ⚙ Configurações
               </button>
-              <button className={view === "checklist" ? "active" : ""} onClick={() => setView("checklist")}>
+              <button className={view === "checklist" ? "active" : ""} onClick={() => handleNavigateView("checklist")}>
                 ✓ Nova ronda
               </button>
             </>
           ) : (
-            <button className={view === "checklist" ? "active" : ""} onClick={() => setView("checklist")}>
-              ✓ Nova ronda operacional
+            <button className={view === "checklist" ? "active" : ""} onClick={() => handleNavigateView("checklist")}>
+              ✓ Nova ronda
             </button>
           )}
         </nav>
@@ -473,13 +736,8 @@ export default function Home() {
         <div className="sidebar-bottom">
           <p>SESSÃO ATIVA</p>
           <strong>{role === "admin" ? "Administrador" : operator}</strong>
-          <button
-            className="logout"
-            onClick={() => {
-              setRole(null);
-            }}
-          >
-            ← Sair / Voltar ao Início
+          <button className="logout" onClick={handleLogout}>
+            ← Sair
           </button>
           <div className="sidebar-credits">
             Desenvolvido por{" "}
@@ -492,23 +750,49 @@ export default function Home() {
 
       <section className="workspace">
         <header className="topbar">
-          <div>
-            <p>Aeroporto Internacional do Galeão — SBGL</p>
+          <div className="topbar-title-box">
+            <p className="topbar-subtitle">SBGL · GALEÃO</p>
             <strong>
               {view === "checklist"
-                ? "Nova ronda operacional"
+                ? "Ronda Operacional"
                 : view === "people"
-                ? "Cadastro de bombeiros"
+                ? "Bombeiros"
                 : view === "reports"
-                ? "Relatórios de inspeção"
-                : "Painel de controle"}
+                ? "Relatórios"
+                : "Painel Geral"}
             </strong>
           </div>
-          <div>
-            {role === "admin" && <NotificationBell notifications={notifications} onAcknowledge={acknowledgeNotification} />}
+          <div className="topbar-actions">
+            <button
+              type="button"
+              className={`sync-btn ${isRefreshing ? "is-loading" : ""}`}
+              onClick={() => void applyData(false)}
+              title="Clique para sincronizar os dados"
+            >
+              <span className={`sync-icon ${isRefreshing ? "spin" : ""}`}>🔄</span>
+              <span className="sync-label">{isRefreshing ? "Atualizando..." : "Atualizar"}</span>
+              {lastSync && (
+                <span className="sync-time">
+                  {lastSync.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+            </button>
+
+            {role === "admin" && (
+              <NotificationBell
+                notifications={notifications}
+                onAcknowledge={acknowledgeNotification}
+                onOpenRound={handleOpenRoundById}
+              />
+            )}
+
             <Tag tone={role === "admin" ? "danger" : "good"}>
-              {role === "admin" ? "MODO ADMIN" : `BOMBEIRO: ${firefighter?.name.split(" ")[0].toUpperCase()}`}
+              {role === "admin" ? "ADMIN" : (firefighter?.name ? firefighter.name.split(" ")[0].toUpperCase() : "BOMBEIRO")}
             </Tag>
+
+            <button type="button" className="topbar-logout-btn" onClick={handleLogout} title="Sair da sessão">
+              Sair
+            </button>
           </div>
         </header>
 
@@ -516,9 +800,21 @@ export default function Home() {
         {message && <div className="config-warning error-message">{message}</div>}
 
         {view === "dashboard" && role === "admin" && (
-          <Dashboard rounds={rounds} totalToday={totalToday} average={average} onStart={() => setView("checklist")} />
+          <Dashboard
+            rounds={rounds}
+            totalToday={totalToday}
+            average={average}
+            onStart={() => handleNavigateView("checklist")}
+            onSelectRound={(r) => handleOpenRound(r, "all")}
+          />
         )}
-        {view === "reports" && role === "admin" && <Reports rounds={rounds} onUpdateRoundStatus={handleUpdateRoundStatus} />}
+        {view === "reports" && role === "admin" && (
+          <Reports
+            rounds={rounds}
+            onUpdateRoundStatus={handleUpdateRoundStatus}
+            onSelectRound={handleOpenRound}
+          />
+        )}
         {view === "people" && role === "admin" && <People people={people} onAdd={() => setShowPersonModal(true)} />}
         {view === "settings" && role === "admin" && (
           <NotificationSettings
@@ -531,7 +827,7 @@ export default function Home() {
           <Checklist
             people={people}
             operator={operator}
-            setOperator={setOperator}
+            setOperator={handleOperatorChange}
             firefighter={firefighter}
             answers={answers}
             setAnswers={setAnswers}
@@ -548,6 +844,15 @@ export default function Home() {
           />
         )}
       </section>
+
+      {selectedRound && (
+        <RoundDetailsModal
+          round={selectedRound}
+          initialTab={selectedRoundTab}
+          onClose={() => setSelectedRound(null)}
+          onUpdateStatus={handleUpdateRoundStatus}
+        />
+      )}
 
       {showPersonModal && (
         <PersonModal
@@ -567,16 +872,16 @@ function LandingGate({ onSelectAdmin, onSelectFirefighter }: { onSelectAdmin: ()
     <div className="landing-gate">
       <div className="landing-container">
         <div className="landing-brand">
-          <img src="/LOGO-ENSEG-branco.png" alt="ENSEG - Segurança que gera confiança" className="landing-logo-img" />
+          <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" className="landing-logo-img" />
         </div>
 
         <div className="landing-badge">
-          <span className="pulse" /> AEROPORTO INTERNACIONAL DO GALEÃO — SBGL
+          <span className="pulse" /> SBGL · GALEÃO
         </div>
 
-        <h1 className="landing-title">Sistema de Inspeção e Controle Operacional</h1>
+        <h1 className="landing-title">Sistema de Inspeção Operacional</h1>
         <p className="landing-subtitle">
-          Selecione seu perfil de acesso para prosseguir com a gestão das vistorias de emergência e combate a incêndio.
+          Selecione seu perfil de acesso:
         </p>
 
         <div className="landing-grid">
@@ -584,7 +889,7 @@ function LandingGate({ onSelectAdmin, onSelectFirefighter }: { onSelectAdmin: ()
             <span className="role-badge">Acesso Restrito</span>
             <div className="role-icon">🛡️</div>
             <h3>Administrador</h3>
-            <p>Acesse a visão geral das operações, relatórios de auditoria e gerencie os cadastros da equipe de bombeiros.</p>
+            <p>Painel de controle, relatórios gerenciais e gestão da equipe.</p>
             <button
               type="button"
               className="role-btn"
@@ -593,7 +898,7 @@ function LandingGate({ onSelectAdmin, onSelectFirefighter }: { onSelectAdmin: ()
                 onSelectAdmin();
               }}
             >
-              <span>Entrar com senha</span>
+              <span>Entrar</span>
               <span>→</span>
             </button>
           </div>
@@ -601,8 +906,8 @@ function LandingGate({ onSelectAdmin, onSelectFirefighter }: { onSelectAdmin: ()
           <div className="role-card" onClick={onSelectFirefighter} role="button" tabIndex={0}>
             <span className="role-badge">Operacional</span>
             <div className="role-icon">👨‍🚒</div>
-            <h3>Bombeiro Operacional</h3>
-            <p>Identifique-se para iniciar o preenchimento de uma nova ronda de inspeção nos postos TPS, TECA e Hangar.</p>
+            <h3>Bombeiro</h3>
+            <p>Preenchimento da ronda de inspeção e registro de ocorrências.</p>
             <button
               type="button"
               className="role-btn"
@@ -611,14 +916,14 @@ function LandingGate({ onSelectAdmin, onSelectFirefighter }: { onSelectAdmin: ()
                 onSelectFirefighter();
               }}
             >
-              <span>Iniciar Nova Ronda</span>
+              <span>Nova Ronda</span>
               <span>→</span>
             </button>
           </div>
         </div>
 
         <div className="landing-footer">
-          ENSEG © {new Date().getFullYear()} — Plataforma de Gerenciamento de Brigada e Rondas Operacionais SBGL.
+          ENSEG © {new Date().getFullYear()} · Galeão (SBGL)
           <br />
           <span style={{ marginTop: "6px", display: "inline-block" }}>
             Desenvolvido por{" "}
@@ -685,7 +990,15 @@ function AdminAuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess
   );
 }
 
-function NotificationBell({ notifications, onAcknowledge }: { notifications: AdminNotification[]; onAcknowledge: (id: string) => void }) {
+function NotificationBell({
+  notifications,
+  onAcknowledge,
+  onOpenRound
+}: {
+  notifications: AdminNotification[];
+  onAcknowledge: (id: string) => void;
+  onOpenRound?: (roundId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -701,11 +1014,49 @@ function NotificationBell({ notifications, onAcknowledge }: { notifications: Adm
             <small>{notifications.length} aguardando ciência</small>
           </div>
           {notifications.length ? notifications.map((notification) => (
-            <article className="notification-item" key={notification.id}>
-              <b>{notification.title}</b>
+            <article
+              className="notification-item"
+              key={notification.id}
+              style={{ cursor: "pointer", transition: "background 0.15s ease" }}
+              onClick={() => {
+                if (onOpenRound && notification.round_id) {
+                  onOpenRound(notification.round_id);
+                  setOpen(false);
+                }
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "6px" }}>
+                <b>🚨 {notification.title}</b>
+                <small style={{ whiteSpace: "nowrap" }}>{dateLabel(notification.created_at)}</small>
+              </div>
               <p>{notification.message}</p>
-              <small>{dateLabel(notification.created_at)}</small>
-              <button type="button" className="primary" onClick={() => onAcknowledge(notification.id)}>✓ Ciente</button>
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "8px" }}>
+                <button
+                  type="button"
+                  className="outline"
+                  style={{ padding: "4px 8px", fontSize: "11px", borderColor: "var(--red)", color: "var(--red)" }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onOpenRound && notification.round_id) {
+                      onOpenRound(notification.round_id);
+                      setOpen(false);
+                    }
+                  }}
+                >
+                  🔍 Ver Ocorrência
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  style={{ padding: "4px 10px", fontSize: "11px" }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAcknowledge(notification.id);
+                  }}
+                >
+                  ✓ Ciente
+                </button>
+              </div>
             </article>
           )) : <p className="notification-empty">Nenhuma ocorrência aguardando confirmação.</p>}
         </div>
@@ -831,10 +1182,10 @@ function NotificationSettings({
     <div className="content">
       <section className="section-head">
         <div>
-          <p className="eyebrow">ALERTAS OPERACIONAIS EM TEMPO REAL</p>
-          <h2>Canais de Notificação (WhatsApp & E-mail)</h2>
+          <p className="eyebrow">ALERTAS</p>
+          <h2>Canais de Notificação</h2>
           <p className="muted">
-            Configure os canais oficiais para recebimento imediato de alertas sempre que uma ronda registrar não conformidades.
+            Configuração de destinatários para alertas imediatos de não conformidades.
           </p>
         </div>
       </section>
@@ -968,7 +1319,7 @@ function FirefighterIdentifyModal({
         </button>
         <div className="modal-header-banner">
           <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" className="modal-logo-img" />
-          <p className="eyebrow">IDENTIFICAÇÃO OPERACIONAL</p>
+          <p className="eyebrow">IDENTIFICAÇÃO</p>
           <h2>Identificação do Bombeiro</h2>
         </div>
 
@@ -990,15 +1341,15 @@ function FirefighterIdentifyModal({
               <input readOnly value={firefighter.shift} />
             </label>
             <label>
-              POSTO 1 — TPS
+              TPS
               <input readOnly value={firefighter.tps_team} />
             </label>
             <label>
-              POSTO 2 — TECA
+              TECA
               <input readOnly value={firefighter.teca_team} />
             </label>
             <label>
-              POSTO 3 — HANGAR
+              HANGAR
               <input readOnly value={firefighter.hangar_united_team} />
             </label>
           </div>
@@ -1009,7 +1360,7 @@ function FirefighterIdentifyModal({
             Cancelar
           </button>
           <button type="submit" className="primary">
-            Confirmar e Iniciar Ronda
+            Iniciar Ronda
           </button>
         </div>
       </form>
@@ -1017,45 +1368,63 @@ function FirefighterIdentifyModal({
   );
 }
 
-function Dashboard({ rounds, totalToday, average, onStart }: { rounds: Round[]; totalToday: number; average: string; onStart: () => void }) {
+function Dashboard({
+  rounds,
+  totalToday,
+  average,
+  onStart,
+  onSelectRound
+}: {
+  rounds: Round[];
+  totalToday: number;
+  average: string;
+  onStart: () => void;
+  onSelectRound?: (round: Round) => void;
+}) {
   return (
     <div className="content">
       <section className="hero">
         <div>
-          <p className="eyebrow">OPERAÇÃO EM ACOMPANHAMENTO</p>
+          <p className="eyebrow">SBGL · GALEÃO</p>
           <h1>
-            Controle da ronda.
+            Painel Operacional
             <br />
-            <em>Decisão com evidência.</em>
+            <em>de Rondas</em>
           </h1>
-          <p className="muted">Inspeções e ocorrências operacionais do SBGL em um só lugar.</p>
+          <p className="muted">Monitoramento em tempo real das inspeções e ocorrências.</p>
           <button className="primary" onClick={onStart}>
             + Iniciar nova ronda
           </button>
         </div>
         <div className="hero-number">
           <b>{average}</b>
-          <span>
-            conformidade média
-            <br />
-            das rondas registradas
-          </span>
+          <span>conformidade média geral</span>
         </div>
       </section>
       <section className="stats">
-        <Metric label="Rondas hoje" value={String(totalToday).padStart(2, "0")} detail="registradas no banco" />
-        <Metric label="Conformidade geral" value={average} detail="média dos relatórios" alert />
-        <Metric label="Em análise" value={String(rounds.filter((round) => round.status === "Em análise").length).padStart(2, "0")} detail="aguardando validação" />
-        <Metric label="Ocorrências abertas" value={String(rounds.filter((round) => round.status === "Ocorrência").length).padStart(2, "0")} detail="com não conformidades" danger />
+        <Metric label="Rondas hoje" value={String(totalToday).padStart(2, "0")} detail="hoje" />
+        <Metric label="Conformidade geral" value={average} detail="índice médio" alert />
+        <Metric label="Em análise" value={String(rounds.filter((round) => round.status === "Em análise").length).padStart(2, "0")} detail="pendentes" />
+        <Metric label="Ocorrências" value={String(rounds.filter((round) => round.status === "Ocorrência").length).padStart(2, "0")} detail="com não conformidades" danger />
       </section>
       <section className="section-head">
         <div>
-          <p className="eyebrow">ATIVIDADE RECENTE</p>
-          <h2>Últimos relatórios enviados</h2>
+          <p className="eyebrow">HISTÓRICO</p>
+          <h2>Últimos relatórios</h2>
         </div>
       </section>
       <div className="report-list">
-        {rounds.length ? rounds.slice(0, 5).map((round) => <ReportRow key={round.id} report={round} />) : <div className="empty-line">Nenhuma ronda registrada ainda.</div>}
+        {rounds.length ? (
+          rounds.slice(0, 5).map((round) => (
+            <ReportRow
+              key={round.id}
+              report={round}
+              onClick={onSelectRound ? () => onSelectRound(round) : undefined}
+            />
+          ))
+        ) : (
+          <div className="empty-line">Nenhuma ronda registrada ainda.</div>
+        )}
       </div>
     </div>
   );
@@ -1073,6 +1442,7 @@ function Metric({ label, value, detail, alert, danger }: { label: string; value:
 
 function ReportRow({ report, onClick }: { report: Round; onClick?: () => void }) {
   const tone = report.status === "Aprovado" ? "good" : report.status === "Ocorrência" ? "danger" : "warn";
+  const cleanScore = getRoundCleanConformity(report);
   return (
     <article className="report-row" onClick={onClick} style={{ cursor: onClick ? "pointer" : "default" }}>
       <div className="report-icon">✓</div>
@@ -1083,8 +1453,8 @@ function ReportRow({ report, onClick }: { report: Round; onClick?: () => void })
         </span>
       </div>
       <span className="report-date">{dateLabel(report.created_at)}</span>
-      <b className="report-score" style={{ color: report.conformity === 100 ? "var(--green)" : "var(--red)" }}>
-        {report.conformity}%
+      <b className="report-score" style={{ color: cleanScore === 100 ? "var(--green)" : "var(--red)" }}>
+        {cleanScore}%
       </b>
       <Tag tone={tone}>{report.status}</Tag>
       <span />
@@ -1106,6 +1476,103 @@ type RoundAnswer = {
   ss_number?: string | null;
   photo_path?: string | null;
 };
+
+function AuditIssueDetail({
+  ans,
+  onPreviewPhoto
+}: {
+  ans: RoundAnswer;
+  onPreviewPhoto: (photo: { url: string; title: string }) => void;
+}) {
+  return (
+    <div className="audit-issue-detail" style={{ marginTop: "6px", padding: "10px 14px", fontSize: "11px" }}>
+      <div>
+        <strong>Localização:</strong>
+        <p>{ans.location || "N/A"}</p>
+      </div>
+      <div>
+        <strong>Observação / Anomalia:</strong>
+        <p>{ans.observation || "N/A"}</p>
+      </div>
+      <div>
+        <strong>Providência Adotada:</strong>
+        <p>{ans.action_taken || "N/A"}</p>
+      </div>
+      <div>
+        <strong>Supervisor Notificado:</strong>
+        <p>{ans.supervisor_notified || "N/A"}</p>
+      </div>
+      <div>
+        <strong>Nº da Solicitação de Serviço (SS):</strong>
+        <p style={{ fontWeight: 700, color: ans.ss_number ? "#b91c1c" : "#666", fontSize: "12px" }}>
+          {ans.ss_number ? `📋 ${ans.ss_number}` : "Não informado"}
+        </p>
+      </div>
+      {ans.priority && (
+        <div>
+          <strong>Prioridade:</strong>
+          <p>{ans.priority}</p>
+        </div>
+      )}
+      {ans.photo_path ? (
+        <div style={{ gridColumn: "1 / -1", marginTop: "8px", paddingTop: "8px", borderTop: "1px dashed #e2c0c0" }}>
+          <strong style={{ display: "block", marginBottom: "4px" }}>Evidência Fotográfica / Anexo em Imagem:</strong>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            <img
+              src={ans.photo_path}
+              alt={`Evidência fotográfica #${ans.item_number}`}
+              className="audit-photo-img"
+              crossOrigin="anonymous"
+              style={{
+                maxWidth: "220px",
+                maxHeight: "140px",
+                borderRadius: "6px",
+                objectFit: "cover",
+                border: "1px solid #d99999",
+                cursor: "pointer",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.12)"
+              }}
+              onClick={() =>
+                onPreviewPhoto({
+                  url: ans.photo_path!,
+                  title: `Item #${ans.item_number} · ${ans.item_text}`
+                })
+              }
+            />
+            <div className="no-print" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <button
+                type="button"
+                className="outline"
+                style={{ padding: "6px 12px", fontSize: "11px", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                onClick={() =>
+                  onPreviewPhoto({
+                    url: ans.photo_path!,
+                    title: `Item #${ans.item_number} · ${ans.item_text}`
+                  })
+                }
+              >
+                🔍 Ampliar Imagem
+              </button>
+              <a
+                href={ans.photo_path}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: "11px", color: "var(--red)", textDecoration: "underline", display: "inline-block", marginTop: "2px" }}
+              >
+                ↗ Abrir imagem original
+              </a>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ gridColumn: "1 / -1", marginTop: "4px" }}>
+          <strong style={{ color: "#777" }}>Registro Fotográfico:</strong>
+          <p style={{ color: "#888", fontStyle: "italic", margin: 0, fontSize: "11px" }}>Nenhum anexo fotográfico enviado.</p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const downloadElementAsPdf = async (elementId: string, filename: string) => {
   const container = document.getElementById(elementId);
@@ -1191,17 +1658,24 @@ function PdfSignatures() {
 
 function RoundDetailsModal({
   round,
+  initialTab = "all",
   onClose,
   onUpdateStatus
 }: {
   round: Round;
+  initialTab?: "all" | "issues" | "conform";
   onClose: () => void;
   onUpdateStatus: (roundId: string, newStatus: "Em análise" | "Aprovado" | "Ocorrência") => void;
 }) {
   const [answers, setAnswers] = useState<RoundAnswer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"all" | "issues" | "conform">("all");
+  const [activeTab, setActiveTab] = useState<"all" | "issues" | "conform">(initialTab);
   const [downloading, setDownloading] = useState(false);
+  const [previewPhoto, setPreviewPhoto] = useState<{ url: string; title: string } | null>(null);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab, round.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1223,6 +1697,15 @@ function RoundDetailsModal({
         }
       }
 
+      // Se existir no cache em memória (ex: ronda criada em modo demo)
+      if (demoAnswersMap.has(round.id)) {
+        if (isMounted) {
+          setAnswers(demoAnswersMap.get(round.id)!);
+          setLoading(false);
+        }
+        return;
+      }
+
       // Demo / Fallback mode: Map all 20 checklist items with simulated answers
       const demoAnswers: RoundAnswer[] = checklistItems.map((itemText, index) => {
         const itemNumber = index + 1;
@@ -1241,7 +1724,9 @@ function RoundDetailsModal({
           action_taken: isNonConform ? "Área isolada e comunicado imediato à brigada de plantão." : null,
           supervisor_notified: isNonConform ? "Inspetor de Segurança — 15:20h" : null,
           ss_number: isNonConform ? `SS-2026-${1080 + index}` : null,
-          photo_path: null
+          photo_path: isNonConform
+            ? "https://images.unsplash.com/photo-1582139329536-e7284fece509?w=800&auto=format&fit=crop&q=80"
+            : null
         };
       });
 
@@ -1263,7 +1748,7 @@ function RoundDetailsModal({
     return answers;
   }, [answers, activeTab]);
 
-  const filteredChunkSize = activeTab === "issues" ? 4 : 10;
+  const filteredChunkSize = activeTab === "issues" ? 3 : 10;
   const filteredChunks = useMemo(() => {
     if (filteredAnswers.length <= filteredChunkSize) {
       return [filteredAnswers];
@@ -1278,6 +1763,7 @@ function RoundDetailsModal({
   const totalConform = answers.filter((a) => a.status === "Conforme").length;
   const totalNonConform = answers.filter((a) => a.status === "Não conforme").length;
   const totalNA = answers.filter((a) => a.status === "N/A").length;
+  const cleanConformity = getRoundCleanConformity(round);
 
   const handlePrintRoundPdf = () => {
     const oldTitle = document.title;
@@ -1348,7 +1834,7 @@ function RoundDetailsModal({
                 <div className="pdf-page-content">
                   <div className="modal-header-banner">
                     <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" className="modal-logo-img" />
-                    <p className="eyebrow">RELATÓRIO COMPLETO DE AUDITORIA DA RONDA</p>
+                    <p className="eyebrow">AUDITORIA DA RONDA</p>
                     <h2>{round.protocol}</h2>
                   </div>
 
@@ -1378,8 +1864,8 @@ function RoundDetailsModal({
                   <div className="round-metrics-grid" style={{ marginBottom: "16px" }}>
                     <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "var(--red)" }}>
                       <p style={{ margin: 0, fontSize: "9px" }}>CONFORMIDADE GERAL</p>
-                      <b style={{ fontSize: "20px", color: round.conformity === 100 ? "var(--green)" : "var(--red)" }}>
-                        {round.conformity}%
+                      <b style={{ fontSize: "20px", color: cleanConformity === 100 ? "var(--green)" : "var(--red)" }}>
+                        {cleanConformity}%
                       </b>
                     </div>
                     <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "#159365" }}>
@@ -1419,14 +1905,7 @@ function RoundDetailsModal({
                             </div>
                             <Tag tone={isOk ? "good" : isBad ? "danger" : "warn"}>{ans.status}</Tag>
                           </div>
-                          {isBad && (
-                            <div className="audit-issue-detail" style={{ marginTop: "4px", padding: "6px 10px", fontSize: "10px" }}>
-                              <div><strong>Localização:</strong> <p>{ans.location || "N/A"}</p></div>
-                              <div><strong>Observação:</strong> <p>{ans.observation || "N/A"}</p></div>
-                              <div><strong>Providência:</strong> <p>{ans.action_taken || "N/A"}</p></div>
-                              <div><strong>Supervisor:</strong> <p>{ans.supervisor_notified || "N/A"}</p></div>
-                            </div>
-                          )}
+                          {isBad && <AuditIssueDetail ans={ans} onPreviewPhoto={setPreviewPhoto} />}
                         </div>
                       );
                     })}
@@ -1468,14 +1947,7 @@ function RoundDetailsModal({
                             </div>
                             <Tag tone={isOk ? "good" : isBad ? "danger" : "warn"}>{ans.status}</Tag>
                           </div>
-                          {isBad && (
-                            <div className="audit-issue-detail" style={{ marginTop: "4px", padding: "6px 10px", fontSize: "10px" }}>
-                              <div><strong>Localização:</strong> <p>{ans.location || "N/A"}</p></div>
-                              <div><strong>Observação:</strong> <p>{ans.observation || "N/A"}</p></div>
-                              <div><strong>Providência:</strong> <p>{ans.action_taken || "N/A"}</p></div>
-                              <div><strong>Supervisor:</strong> <p>{ans.supervisor_notified || "N/A"}</p></div>
-                            </div>
-                          )}
+                          {isBad && <AuditIssueDetail ans={ans} onPreviewPhoto={setPreviewPhoto} />}
                         </div>
                       );
                     })}
@@ -1534,8 +2006,8 @@ function RoundDetailsModal({
                         <div className="round-metrics-grid" style={{ marginBottom: "16px" }}>
                           <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "var(--red)" }}>
                             <p style={{ margin: 0, fontSize: "9px" }}>CONFORMIDADE GERAL</p>
-                            <b style={{ fontSize: "20px", color: round.conformity === 100 ? "var(--green)" : "var(--red)" }}>
-                              {round.conformity}%
+                            <b style={{ fontSize: "20px", color: cleanConformity === 100 ? "var(--green)" : "var(--red)" }}>
+                              {cleanConformity}%
                             </b>
                           </div>
                           <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "#159365" }}>
@@ -1600,14 +2072,7 @@ function RoundDetailsModal({
                                 </div>
                                 <Tag tone={isOk ? "good" : isBad ? "danger" : "warn"}>{ans.status}</Tag>
                               </div>
-                              {isBad && (
-                                <div className="audit-issue-detail" style={{ marginTop: "4px", padding: "6px 10px", fontSize: "10px" }}>
-                                  <div><strong>Localização:</strong> <p>{ans.location || "N/A"}</p></div>
-                                  <div><strong>Observação:</strong> <p>{ans.observation || "N/A"}</p></div>
-                                  <div><strong>Providência:</strong> <p>{ans.action_taken || "N/A"}</p></div>
-                                  <div><strong>Supervisor:</strong> <p>{ans.supervisor_notified || "N/A"}</p></div>
-                                </div>
-                              )}
+                              {isBad && <AuditIssueDetail ans={ans} onPreviewPhoto={setPreviewPhoto} />}
                             </div>
                           );
                         })
@@ -1670,6 +2135,94 @@ function RoundDetailsModal({
           </button>
         )}
       </div>
+
+      {previewPhoto && (
+        <div
+          className="modal-backdrop no-print"
+          style={{ zIndex: 10000000, background: "rgba(0,0,0,0.85)" }}
+          onClick={() => setPreviewPhoto(null)}
+        >
+          <div
+            className="modal photo-preview-modal-box"
+            style={{
+              maxWidth: "760px",
+              width: "95%",
+              background: "#18191c",
+              color: "#fff",
+              padding: "20px",
+              borderRadius: "8px",
+              border: "1px solid #333"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "14px",
+                borderBottom: "1px solid #2a2b2f",
+                paddingBottom: "10px"
+              }}
+            >
+              <strong style={{ fontSize: "13px", color: "#f0f0f0" }}>{previewPhoto.title}</strong>
+              <button
+                type="button"
+                className="outline"
+                style={{ padding: "4px 10px", fontSize: "12px", color: "#fff", borderColor: "#555" }}
+                onClick={() => setPreviewPhoto(null)}
+              >
+                ✕ Fechar
+              </button>
+            </div>
+            <div
+              className="photo-preview-img-wrap"
+              style={{
+                maxHeight: "70vh",
+                overflow: "auto",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                background: "#0e0e10",
+                borderRadius: "6px",
+                padding: "10px"
+              }}
+            >
+              <img
+                src={previewPhoto.url}
+                alt="Evidência ampliada"
+                crossOrigin="anonymous"
+                style={{ maxWidth: "100%", maxHeight: "65vh", objectFit: "contain", borderRadius: "4px" }}
+              />
+            </div>
+            <div className="photo-preview-actions" style={{ marginTop: "14px", display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <a
+                href={previewPhoto.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="primary"
+                style={{
+                  padding: "8px 16px",
+                  fontSize: "12px",
+                  textDecoration: "none",
+                  borderRadius: "4px",
+                  background: "var(--red)"
+                }}
+              >
+                ↗ Abrir imagem original
+              </a>
+              <button
+                type="button"
+                className="outline"
+                style={{ padding: "8px 16px", fontSize: "12px", color: "#fff", borderColor: "#555" }}
+                onClick={() => setPreviewPhoto(null)}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   </div>
 );
@@ -1701,7 +2254,7 @@ function PdfReportModal({
 
   const totalRounds = rounds.length;
   const avgConformity = totalRounds
-    ? Math.round(rounds.reduce((acc, r) => acc + r.conformity, 0) / totalRounds)
+    ? Math.round(rounds.reduce((acc, r) => acc + getRoundCleanConformity(r), 0) / totalRounds)
     : 0;
   const totalOccurrences = rounds.reduce((acc, r) => acc + r.non_conformities, 0);
   const totalApproved = rounds.filter((r) => r.status === "Aprovado").length;
@@ -1933,7 +2486,8 @@ function PdfReportModal({
                   {tableChunks[0] && tableChunks[0].length ? (
                     tableChunks[0].map((r) => {
                       const tone = r.status === "Aprovado" ? "good" : r.status === "Ocorrência" ? "danger" : "warn";
-                      const fillBg = r.conformity === 100 ? "#138b60" : r.conformity >= 90 ? "#bb7900" : "#e11919";
+                      const cleanScore = getRoundCleanConformity(r);
+                      const fillBg = cleanScore === 100 ? "#138b60" : cleanScore >= 90 ? "#bb7900" : "#e11919";
 
                       return (
                         <tr key={r.id}>
@@ -1943,9 +2497,9 @@ function PdfReportModal({
                           <td><span>{r.shift} · TPS {r.tps_team}</span></td>
                           <td>
                             <div className="pdf-conformity-bar-wrap">
-                              <strong style={{ color: fillBg, minWidth: "32px" }}>{r.conformity}%</strong>
+                              <strong style={{ color: fillBg, minWidth: "32px" }}>{cleanScore}%</strong>
                               <div className="pdf-conformity-bar">
-                                <div className="pdf-conformity-fill" style={{ width: `${r.conformity}%`, background: fillBg }} />
+                                <div className="pdf-conformity-fill" style={{ width: `${cleanScore}%`, background: fillBg }} />
                               </div>
                             </div>
                           </td>
@@ -2024,7 +2578,8 @@ function PdfReportModal({
                     <tbody>
                       {chunk.map((r) => {
                         const tone = r.status === "Aprovado" ? "good" : r.status === "Ocorrência" ? "danger" : "warn";
-                        const fillBg = r.conformity === 100 ? "#138b60" : r.conformity >= 90 ? "#bb7900" : "#e11919";
+                        const cleanScore = getRoundCleanConformity(r);
+                        const fillBg = cleanScore === 100 ? "#138b60" : cleanScore >= 90 ? "#bb7900" : "#e11919";
 
                         return (
                           <tr key={r.id}>
@@ -2034,9 +2589,9 @@ function PdfReportModal({
                             <td><span>{r.shift} · TPS {r.tps_team}</span></td>
                             <td>
                               <div className="pdf-conformity-bar-wrap">
-                                <strong style={{ color: fillBg, minWidth: "32px" }}>{r.conformity}%</strong>
+                                <strong style={{ color: fillBg, minWidth: "32px" }}>{cleanScore}%</strong>
                                 <div className="pdf-conformity-bar">
-                                  <div className="pdf-conformity-fill" style={{ width: `${r.conformity}%`, background: fillBg }} />
+                                  <div className="pdf-conformity-fill" style={{ width: `${cleanScore}%`, background: fillBg }} />
                                 </div>
                               </div>
                             </td>
@@ -2151,19 +2706,34 @@ function PdfReportModal({
 
 function Reports({
   rounds,
-  onUpdateRoundStatus
+  onUpdateRoundStatus,
+  onSelectRound
 }: {
   rounds: Round[];
   onUpdateRoundStatus: (roundId: string, newStatus: "Em análise" | "Aprovado" | "Ocorrência") => void;
+  onSelectRound?: (round: Round, tab?: "all" | "issues" | "conform") => void;
 }) {
+  const getThisMonthRange = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return {
+      start: `${y}-${m}-01`,
+      end: `${y}-${m}-${d}`
+    };
+  };
+
+  const defaultMonth = useMemo(() => getThisMonthRange(), []);
+
   const [searchTerm, setSearchTerm] = useState("");
   const [firefighterFilter, setFirefighterFilter] = useState("all");
   const [shiftFilter, setShiftFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [stationFilter, setStationFilter] = useState("all");
-  const [datePreset, setDatePreset] = useState("all");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [datePreset, setDatePreset] = useState("thisMonth");
+  const [startDate, setStartDate] = useState(() => defaultMonth.start);
+  const [endDate, setEndDate] = useState(() => defaultMonth.end);
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [selectedRound, setSelectedRound] = useState<Round | null>(null);
   const [pageSize, setPageSize] = useState<number | "all">("all");
@@ -2216,19 +2786,17 @@ function Reports({
     setShiftFilter("all");
     setStatusFilter("all");
     setStationFilter("all");
-    setDatePreset("all");
-    setStartDate("");
-    setEndDate("");
+    applyPreset("thisMonth");
   };
 
+  const isDefaultDate = datePreset === "thisMonth" && startDate === defaultMonth.start && endDate === defaultMonth.end;
   const hasActiveFilters =
     Boolean(searchTerm) ||
     firefighterFilter !== "all" ||
     shiftFilter !== "all" ||
     statusFilter !== "all" ||
     stationFilter !== "all" ||
-    Boolean(startDate) ||
-    Boolean(endDate);
+    !isDefaultDate;
 
   // Filtragem multi-critério (Período, Categoria, Bombeiro, Status, Busca)
   const filteredRounds = useMemo(() => {
@@ -2261,10 +2829,10 @@ function Reports({
     });
   }, [rounds, searchTerm, firefighterFilter, shiftFilter, statusFilter, stationFilter, startDate, endDate]);
 
-  // Métricas do painel calculadas com base nos filtros
+  // Métricas do painel calculadas com base nos filtros (exclui N/A da conformidade)
   const totalRounds = filteredRounds.length;
   const avgConformity = totalRounds
-    ? Math.round(filteredRounds.reduce((acc, r) => acc + r.conformity, 0) / totalRounds)
+    ? Math.round(filteredRounds.reduce((acc, r) => acc + getRoundCleanConformity(r), 0) / totalRounds)
     : 0;
   const totalOccurrences = filteredRounds.reduce((acc, r) => acc + r.non_conformities, 0);
   const totalApproved = filteredRounds.filter((r) => r.status === "Aprovado").length;
@@ -2285,10 +2853,10 @@ function Reports({
     <div className="content">
       <section className="section-head">
         <div>
-          <p className="eyebrow">AUDITORIA E CONSULTA OPERACIONAL</p>
-          <h2>Relatórios de Vistorias e Inspeções por Bombeiro</h2>
+          <p className="eyebrow">AUDITORIA</p>
+          <h2>Relatórios de Vistorias</h2>
           <p className="muted">
-            Filtre por período, categorias de postos e bombeiros, visualize o detalhamento de respostas e exporte relatórios consolidados em PDF com padrão oficial de engenharia.
+            Filtre por período, posto ou bombeiro e exporte relatórios consolidados em PDF.
           </p>
         </div>
       </section>
@@ -2296,14 +2864,14 @@ function Reports({
       {/* Cards de Resumo dos Relatórios Filtrados */}
       <div className="stats" style={{ marginBottom: "20px" }}>
         <Metric
-          label="TOTAL DE RONDAS REGISTRADAS"
+          label="TOTAL DE RONDAS"
           value={totalRounds.toString()}
-          detail={hasActiveFilters ? "Vistorias no filtro ativo" : "Total histórico no banco de dados"}
+          detail={hasActiveFilters ? "Filtros aplicados" : "Mês atual (padrão)"}
         />
         <Metric
           label="MÉDIA DE CONFORMIDADE"
           value={`${avgConformity}%`}
-          detail="Índice de segurança operacional"
+          detail="Conformes x Ocorrências (exclui N/A)"
           alert={avgConformity < 85}
         />
         <Metric
@@ -2317,14 +2885,27 @@ function Reports({
 
       {/* Painel Organizado de Filtros Avançados & Extração em PDF */}
       <div className="report-filter-container">
+        {/* Cabeçalho do Painel: Título + Contador + Ações Rápidas */}
         <div className="report-filter-header">
-          <div className="report-filter-title">
-            <span>⚙️</span> Filtros de Auditoria & Extração
+          <div className="report-filter-title-wrap">
+            <div className="report-filter-title">
+              <span className="filter-title-icon">⚙️</span>
+              <span>Filtros de Auditoria & Pesquisa</span>
+            </div>
+            <span className="filter-count-badge">
+              {filteredRounds.length} de {rounds.length} vistorias
+            </span>
           </div>
+
           <div className="report-filter-actions">
             {hasActiveFilters && (
-              <button type="button" className="clear-filter-btn" onClick={clearFilters}>
-                ✕ Limpar Filtros
+              <button
+                type="button"
+                className="clear-filter-btn"
+                onClick={clearFilters}
+                title="Restaurar para o filtro padrão do mês atual"
+              >
+                ↺ Restaurar Padrão (Mês Atual)
               </button>
             )}
             <button
@@ -2339,17 +2920,60 @@ function Reports({
           </div>
         </div>
 
-        <div className="filter-grid">
-          {/* Grupo 1: Período */}
-          <div className="filter-group">
-            <span className="filter-group-label">Período da Inspeção</span>
+        {/* Linha 1: Campo de Busca Rápida */}
+        <div className="filter-search-row">
+          <div className="filter-search-box">
+            <span className="filter-search-icon">🔍</span>
+            <input
+              type="text"
+              className="filter-search-input-field"
+              placeholder="Buscar por protocolo (ex: RON-2026), nome do bombeiro ou posto..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                className="filter-search-clear"
+                onClick={() => setSearchTerm("")}
+                title="Limpar texto da busca"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Linha 2: Período Temporal com Chips e Calendário */}
+        <div className="filter-period-section">
+          <div className="filter-section-header">
+            <span className="filter-group-label">📅 Período da Auditoria</span>
+            <span className="filter-period-tag">
+              {datePreset === "thisMonth"
+                ? "● Padrão ativo: Mês Atual"
+                : `Filtro ativo: ${
+                    datePreset === "all"
+                      ? "Todo Período"
+                      : datePreset === "today"
+                      ? "Hoje"
+                      : datePreset === "7days"
+                      ? "Últimos 7 dias"
+                      : datePreset === "30days"
+                      ? "Últimos 30 dias"
+                      : "Personalizado"
+                  }`}
+            </span>
+          </div>
+
+          <div className="filter-period-controls">
             <div className="filter-presets">
               <button
                 type="button"
-                className={`preset-chip ${datePreset === "all" ? "active" : ""}`}
-                onClick={() => applyPreset("all")}
+                className={`preset-chip ${datePreset === "thisMonth" ? "active" : ""}`}
+                onClick={() => applyPreset("thisMonth")}
+                title="Filtro padrão: Do dia 1 do mês atual até hoje"
               >
-                Todo Período
+                Este Mês (Padrão)
               </button>
               <button
                 type="button"
@@ -2374,15 +2998,16 @@ function Reports({
               </button>
               <button
                 type="button"
-                className={`preset-chip ${datePreset === "thisMonth" ? "active" : ""}`}
-                onClick={() => applyPreset("thisMonth")}
+                className={`preset-chip ${datePreset === "all" ? "active" : ""}`}
+                onClick={() => applyPreset("all")}
               >
-                Este Mês
+                Todo Período
               </button>
             </div>
+
             <div className="filter-date-inputs">
-              <label>
-                De:
+              <div className="date-input-field">
+                <span className="date-input-tag">De:</span>
                 <input
                   type="date"
                   value={startDate}
@@ -2391,9 +3016,9 @@ function Reports({
                     setStartDate(e.target.value);
                   }}
                 />
-              </label>
-              <label>
-                Até:
+              </div>
+              <div className="date-input-field">
+                <span className="date-input-tag">Até:</span>
                 <input
                   type="date"
                   value={endDate}
@@ -2402,53 +3027,45 @@ function Reports({
                     setEndDate(e.target.value);
                   }}
                 />
-              </label>
+              </div>
             </div>
           </div>
+        </div>
 
-          {/* Grupo 2: Categorias */}
-          <div className="filter-group">
-            <span className="filter-group-label">Categorias & Postos</span>
-            <div className="filter-controls-row">
-              <select
-                className="filter-select"
-                value={stationFilter}
-                onChange={(e) => setStationFilter(e.target.value)}
-              >
-                <option value="all">Todos os Postos</option>
-                <option value="TPS">Posto 1 — TPS</option>
-                <option value="TECA">Posto 2 — TECA</option>
-                <option value="Hangar">Posto 3 — Hangar United</option>
-              </select>
-              <select
-                className="filter-select"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="all">Todas as Condições</option>
-                <option value="Ocorrência">Com Ocorrências</option>
-                <option value="Aprovado">100% Aprovadas</option>
-                <option value="Em análise">Em análise</option>
-              </select>
-            </div>
-            <div className="filter-controls-row" style={{ marginTop: "8px" }}>
-              <select
-                className="filter-select"
-                value={shiftFilter}
-                onChange={(e) => setShiftFilter(e.target.value)}
-              >
-                <option value="all">Todos os Turnos</option>
-                <option value="Diurno">Turno Diurno</option>
-                <option value="Noturno">Turno Noturno</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Grupo 3: Bombeiro e Busca */}
-          <div className="filter-group">
-            <span className="filter-group-label">Bombeiro Responsável & Busca</span>
+        {/* Linha 3: 4 Colunas Alinhadas de Seleção Categórica */}
+        <div className="filter-selectors-grid">
+          <div className="filter-field-card">
+            <label className="filter-field-label">📍 Posto Operacional</label>
             <select
-              className="filter-select"
+              className="filter-field-select"
+              value={stationFilter}
+              onChange={(e) => setStationFilter(e.target.value)}
+            >
+              <option value="all">Todos os Postos</option>
+              <option value="TPS">Posto 1 — TPS</option>
+              <option value="TECA">Posto 2 — TECA</option>
+              <option value="Hangar">Posto 3 — Hangar United</option>
+            </select>
+          </div>
+
+          <div className="filter-field-card">
+            <label className="filter-field-label">🏷️ Condição / Status</label>
+            <select
+              className="filter-field-select"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="all">Todas as Condições</option>
+              <option value="Ocorrência">Com Ocorrências</option>
+              <option value="Aprovado">100% Aprovadas</option>
+              <option value="Em análise">Em análise</option>
+            </select>
+          </div>
+
+          <div className="filter-field-card">
+            <label className="filter-field-label">👨‍🚒 Bombeiro Responsável</label>
+            <select
+              className="filter-field-select"
               value={firefighterFilter}
               onChange={(e) => setFirefighterFilter(e.target.value)}
             >
@@ -2459,23 +3076,29 @@ function Reports({
                 </option>
               ))}
             </select>
-            <input
-              type="text"
-              className="filter-search-input"
-              placeholder="🔍 Buscar por Protocolo ou Nome..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+          </div>
+
+          <div className="filter-field-card">
+            <label className="filter-field-label">⏱️ Turno da Escala</label>
+            <select
+              className="filter-field-select"
+              value={shiftFilter}
+              onChange={(e) => setShiftFilter(e.target.value)}
+            >
+              <option value="all">Todos os Turnos</option>
+              <option value="Diurno">Turno Diurno</option>
+              <option value="Noturno">Turno Noturno</option>
+            </select>
           </div>
         </div>
 
-        {/* Barra de resumo dos filtros aplicados */}
+        {/* Linha 4: Barra de Resumo dos Filtros Aplicados e Paginação */}
         <div className="filter-summary-bar">
           <div className="filter-badges-applied">
-            <span>Filtros ativos:</span>
+            <span className="summary-title">Filtros ativos:</span>
             {startDate || endDate ? (
               <span className="filter-pill">
-                📅 {startDate || "Início"} até {endDate || "Hoje"}
+                📅 {startDate ? startDate.split("-").reverse().join("/") : "Início"} até {endDate ? endDate.split("-").reverse().join("/") : "Hoje"}
               </span>
             ) : (
               <span className="filter-pill">📅 Período completo</span>
@@ -2488,16 +3111,17 @@ function Reports({
             )}
             {searchTerm && <span className="filter-pill">🔍 &ldquo;{searchTerm}&rdquo;</span>}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+
+          <div className="filter-summary-paging">
             <span>
               Exibindo <strong>{pageSize === "all" ? filteredRounds.length : `${displayedRounds.length} de ${filteredRounds.length}`}</strong> ({rounds.length} no banco)
             </span>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", background: "var(--bg)", padding: "2px 6px", borderRadius: "6px", border: "1px solid var(--line)" }}>
-              <span style={{ color: "var(--muted)" }}>Itens:</span>
+            <div className="filter-page-size-selector">
+              <span style={{ color: "var(--muted)", fontSize: "11px" }}>Itens:</span>
               <button
                 type="button"
                 className={`preset-chip ${pageSize === "all" ? "active" : ""}`}
-                style={{ padding: "2px 6px", fontSize: "10px", height: "auto" }}
+                style={{ padding: "3px 8px", fontSize: "11px" }}
                 onClick={() => setPageSize("all")}
               >
                 Todas ({filteredRounds.length})
@@ -2505,7 +3129,7 @@ function Reports({
               <button
                 type="button"
                 className={`preset-chip ${pageSize === 50 ? "active" : ""}`}
-                style={{ padding: "2px 6px", fontSize: "10px", height: "auto" }}
+                style={{ padding: "3px 8px", fontSize: "11px" }}
                 onClick={() => setPageSize(50)}
               >
                 50
@@ -2513,7 +3137,7 @@ function Reports({
               <button
                 type="button"
                 className={`preset-chip ${pageSize === 100 ? "active" : ""}`}
-                style={{ padding: "2px 6px", fontSize: "10px", height: "auto" }}
+                style={{ padding: "3px 8px", fontSize: "11px" }}
                 onClick={() => setPageSize(100)}
               >
                 100
@@ -2525,7 +3149,7 @@ function Reports({
 
       {/* Tabela de Relatórios */}
       <div className="reports-card">
-        <div className="table-head" style={{ gridTemplateColumns: "minmax(200px, 1fr) 140px 110px 100px 140px" }}>
+        <div className="table-head">
           <span>PROTOCOLO / RESPONSÁVEL</span>
           <span>DATA / HORÁRIO</span>
           <span>CONFORMIDADE</span>
@@ -2536,34 +3160,46 @@ function Reports({
         {displayedRounds.length ? (
           displayedRounds.map((round) => {
             const tone = round.status === "Aprovado" ? "good" : round.status === "Ocorrência" ? "danger" : "warn";
+            const cleanScore = getRoundCleanConformity(round);
             return (
               <div
                 key={round.id}
-                className="report-row"
-                style={{ gridTemplateColumns: "minmax(200px, 1fr) 140px 110px 100px 140px", cursor: "pointer" }}
-                onClick={() => setSelectedRound(round)}
+                className="report-row report-card-row"
+                onClick={() => {
+                  if (onSelectRound) onSelectRound(round, "all");
+                  else setSelectedRound(round);
+                }}
               >
                 <div className="report-main">
-                  <strong>{round.protocol}</strong>
-                  <span>
+                  <div className="report-main-header">
+                    <strong>{round.protocol}</strong>
+                    <div className="mobile-only-tag">
+                      <Tag tone={tone}>{round.status}</Tag>
+                    </div>
+                  </div>
+                  <span className="report-firefighter-sub">
                     👤 <strong>{round.firefighter_name}</strong> ({round.shift}) · Posto TPS {round.tps_team}
                   </span>
                 </div>
-                <span className="report-date">{dateLabel(round.created_at)}</span>
-                <b className="report-score" style={{ color: round.conformity === 100 ? "var(--green)" : "var(--red)" }}>
-                  {round.conformity}%
-                </b>
-                <div>
+                <div className="report-date-cell">
+                  <span className="report-date">{dateLabel(round.created_at)}</span>
+                </div>
+                <div className="report-score-cell">
+                  <b className="report-score" style={{ color: cleanScore === 100 ? "var(--green)" : "var(--red)" }}>
+                    {cleanScore}%
+                  </b>
+                </div>
+                <div className="desktop-only-tag">
                   <Tag tone={tone}>{round.status}</Tag>
                 </div>
-                <div>
+                <div className="report-action-cell">
                   <button
                     type="button"
                     className="primary"
-                    style={{ padding: "6px 10px", fontSize: "11px" }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setSelectedRound(round);
+                      if (onSelectRound) onSelectRound(round, "all");
+                      else setSelectedRound(round);
                     }}
                   >
                     🔎 Ver 20 Respostas
@@ -2616,8 +3252,8 @@ function Reports({
         )}
       </div>
 
-      {/* Modal de Detalhamento da Ronda Individual */}
-      {selectedRound && (
+      {/* Modal de Detalhamento da Ronda Individual (quando Reports não usa o modal global) */}
+      {!onSelectRound && selectedRound && (
         <RoundDetailsModal
           round={selectedRound}
           onClose={() => setSelectedRound(null)}
@@ -2653,12 +3289,12 @@ function People({ people, onAdd }: { people: Firefighter[]; onAdd: () => void })
     <div className="content">
       <section className="section-head people-head">
         <div>
-          <p className="eyebrow">GESTÃO DE ACESSOS</p>
-          <h2>Bombeiros e vínculos operacionais</h2>
-          <p className="muted">Os vínculos preenchem automaticamente a identificação da ronda.</p>
+          <p className="eyebrow">EQUIPE</p>
+          <h2>Bombeiros Cadastrados</h2>
+          <p className="muted">Escalas e postos vinculados à ronda.</p>
         </div>
         <button className="primary" onClick={onAdd}>
-          + Cadastrar bombeiro
+          + Novo bombeiro
         </button>
       </section>
       <div className="people-card">
@@ -2738,15 +3374,15 @@ function Checklist({
       <div>
         <section className="check-header">
           <div>
-            <p className="eyebrow">FORMULÁRIO OFICIAL · SBGL</p>
-            <h2>Inspeção operacional</h2>
-            <p className="muted">Vistoria do sistema de combate a incêndio, equipamentos e abertura de SS.</p>
+            <p className="eyebrow">RONDA OPERACIONAL</p>
+            <h2>Checklist de Inspeção</h2>
+            <p className="muted">20 itens de verificação em campo.</p>
           </div>
-          <Tag tone="warn">Em preenchimento</Tag>
+          <Tag tone="warn">Em andamento</Tag>
         </section>
         <section className="identity">
           <label>
-            NOME COMPLETO
+            BOMBEIRO RESPONSÁVEL
             <select value={operator} onChange={(event) => setOperator(event.target.value)}>
               {people.map((person) => (
                 <option key={person.id ?? person.name}>{person.name}</option>
@@ -2758,22 +3394,22 @@ function Checklist({
             <input readOnly value={firefighter?.shift ?? ""} />
           </label>
           <label>
-            POSTO 1 — TPS
+            TPS
             <input readOnly value={firefighter?.tps_team ?? ""} />
           </label>
           <label>
-            POSTO 2 — TECA
+            TECA
             <input readOnly value={firefighter?.teca_team ?? ""} />
           </label>
           <label>
-            POSTO 3 — HANGAR UNITED
+            HANGAR UNITED
             <input readOnly value={firefighter?.hangar_united_team ?? ""} />
           </label>
         </section>
         <section className="check-card">
           <div className="check-title">
-            <span>ACESSO, SISTEMAS E EQUIPAMENTOS</span>
-            <span>CONDIÇÃO</span>
+            <span>ITEM DE INSPEÇÃO</span>
+            <span>AVALIAÇÃO</span>
           </div>
           {checklistItems.map((item, index) => (
             <div className="check-row" key={item}>
@@ -2820,20 +3456,61 @@ function Checklist({
                     onChange={(event) => updateIssue(index, { supervisor_notified: event.target.value })}
                     placeholder="Supervisor comunicado / horário"
                   />
-                  <input
-                    value={issues[index]?.ss_number ?? ""}
-                    onChange={(event) => updateIssue(index, { ss_number: event.target.value })}
-                    placeholder="Número de SS"
-                  />
-                  <label className="photo-input">
-                    Registro fotográfico (Timestamp)
+                  <div>
+                    <label style={{ fontSize: "11px", fontWeight: "bold", color: "#8a1616", display: "block", marginBottom: "4px" }}>
+                      Número da Solicitação de Serviço (SS):
+                    </label>
                     <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={(event) => updateIssue(index, { photo: event.target.files?.[0] ?? null })}
+                      value={issues[index]?.ss_number ?? ""}
+                      onChange={(event) => updateIssue(index, { ss_number: event.target.value })}
+                      placeholder="Ex.: SS-2026-00123"
                     />
-                  </label>
+                  </div>
+                  <div>
+                    <label className="photo-input" style={{ display: "block", marginBottom: "4px" }}>
+                      Registro fotográfico / Anexo em imagem (Timestamp)
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={(event) => updateIssue(index, { photo: event.target.files?.[0] ?? null })}
+                      />
+                    </label>
+                    {issues[index]?.photo && (
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          marginTop: "8px",
+                          padding: "8px 12px",
+                          background: "#ffffff",
+                          border: "1px solid #d8b8b8",
+                          borderRadius: "6px"
+                        }}
+                      >
+                        <img
+                          src={URL.createObjectURL(issues[index].photo!)}
+                          alt="Pré-visualização do anexo"
+                          style={{ width: "52px", height: "52px", objectFit: "cover", borderRadius: "4px", border: "1px solid #ddd" }}
+                        />
+                        <div style={{ flex: 1, fontSize: "11px" }}>
+                          <strong style={{ color: "#148358", display: "block" }}>✓ Foto anexada com sucesso</strong>
+                          <span style={{ color: "#555" }}>
+                            {issues[index].photo!.name} ({(issues[index].photo!.size / 1024).toFixed(0)} KB)
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="outline"
+                          style={{ padding: "4px 8px", fontSize: "11px", color: "var(--red)", borderColor: "var(--red)" }}
+                          onClick={() => updateIssue(index, { photo: null })}
+                        >
+                          ✕ Remover
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -2841,13 +3518,13 @@ function Checklist({
         </section>
         {nonConformities > 0 && (
           <section className="general-notes">
-            <p className="eyebrow">OBSERVAÇÕES GERAIS</p>
+            <p className="eyebrow">OBSERVAÇÕES ADICIONAIS</p>
             <label>
-              Mensagem final
+              Observações gerais
               <textarea
                 value={finalMessage}
                 onChange={(event) => setFinalMessage(event.target.value)}
-                placeholder="Declaro que a ronda operacional foi realizada conforme os procedimentos estabelecidos..."
+                placeholder="Observações complementares sobre a ronda..."
               />
             </label>
           </section>

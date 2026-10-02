@@ -11,10 +11,13 @@ interface OccurrenceItem {
   item_title?: string;
   itemId?: string | number;
   title?: string;
+  item_text?: string;
   location?: string | null;
   observation?: string | null;
   action_taken?: string | null;
   supervisor_notified?: string | null;
+  ss_number?: string | null;
+  photo_path?: string | null;
 }
 
 interface NotifyPayload {
@@ -63,12 +66,14 @@ function buildWhatsAppMessage({
     ? items
         .map((it) => {
           const num = it.item_number || it.itemId || "-";
-          const title = it.item_title || it.title || "Item Não Conforme";
+          const title = it.item_title || it.title || it.item_text || "Item Não Conforme";
           const loc = it.location ? `\n   📍 *Local:* ${it.location}` : "";
           const obs = it.observation ? `\n   🔍 *Não Conformidade:* ${it.observation}` : "";
           const act = it.action_taken ? `\n   🛠️ *Ação Imediata:* ${it.action_taken}` : "";
           const sup = it.supervisor_notified ? `\n   📞 *Supervisor:* ${it.supervisor_notified}` : "";
-          return `• *Item #${num} — ${title}*${loc}${obs}${act}${sup}`;
+          const ss = it.ss_number ? `\n   📋 *Nº da SS:* ${it.ss_number}` : "";
+          const photo = it.photo_path ? `\n   📸 *Foto/Anexo:* ${it.photo_path}` : "";
+          return `• *Item #${num} — ${title}*${loc}${obs}${act}${sup}${ss}${photo}`;
         })
         .join("\n\n")
     : "Não há detalhamento disponível.";
@@ -206,7 +211,7 @@ async function sendViaResend({
     ? items
         .map((it) => {
           const num = it.item_number || it.itemId || "-";
-          const title = it.item_title || it.title || "Item Não Conforme";
+          const title = it.item_title || it.title || it.item_text || "Item Não Conforme";
           return `
             <div style="background: #ffffff; border: 1px solid #e2e2dc; border-left: 4px solid #d9383a; border-radius: 4px; padding: 12px; margin-bottom: 10px; font-size: 13px;">
               <div style="font-weight: 700; color: #111; font-size: 13px; margin-bottom: 6px;">
@@ -215,7 +220,9 @@ async function sendViaResend({
               <div style="color: #555; margin-bottom: 4px;"><strong>Local:</strong> ${it.location || "Não especificado"}</div>
               <div style="color: #555; margin-bottom: 4px;"><strong>Não Conformidade:</strong> ${it.observation || "Sem observações adicionais"}</div>
               <div style="color: #555; margin-bottom: 4px;"><strong>Providência Adotada:</strong> ${it.action_taken || "Aguardando providência"}</div>
-              ${it.supervisor_notified ? `<div style="color: #555;"><strong>Supervisor Notificado:</strong> ${it.supervisor_notified}</div>` : ""}
+              ${it.supervisor_notified ? `<div style="color: #555; margin-bottom: 4px;"><strong>Supervisor Notificado:</strong> ${it.supervisor_notified}</div>` : ""}
+              ${it.ss_number ? `<div style="color: #555; margin-bottom: 4px;"><strong>Nº da SS:</strong> <strong style="color: #d9383a;">${it.ss_number}</strong></div>` : ""}
+              ${it.photo_path ? `<div style="margin-top: 8px;"><strong>Evidência Fotográfica:</strong><br/><a href="${it.photo_path}" target="_blank" style="display:inline-block; margin-top:4px;"><img src="${it.photo_path}" alt="Evidência fotográfica" style="max-width: 240px; max-height: 160px; border-radius: 4px; border: 1px solid #ddd; object-fit: cover;" /></a></div>` : ""}
             </div>
           `;
         })
