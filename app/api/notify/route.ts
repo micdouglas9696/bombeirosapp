@@ -380,7 +380,7 @@ export async function GET() {
       configuredKey: Boolean(resendKey),
       keyPreview: resendKey ? `${resendKey.slice(0, 5)}...${resendKey.slice(-4)}` : null,
       recipientEmail: emailRecipient,
-      from: process.env.RESEND_FROM_EMAIL || "ENSEG Alertas <onboarding@resend.dev>"
+      from: process.env.RESEND_FROM_EMAIL || "ENSEG Alertas <alertas@mycom.dev.br>"
     }
   });
 }
@@ -410,7 +410,7 @@ export async function POST(request: Request) {
     // API Keys
     const zernioApiKey = process.env.ZERNIO_API_KEY || DEFAULT_ZERNIO_KEY;
     const resendApiKey = process.env.RESEND_API_KEY || "";
-    const resendFrom = process.env.RESEND_FROM_EMAIL || "ENSEG Alertas <onboarding@resend.dev>";
+    const resendFrom = process.env.RESEND_FROM_EMAIL || "ENSEG Alertas <alertas@mycom.dev.br>";
 
     // Build message
     const whatsappMessage = buildWhatsAppMessage({
