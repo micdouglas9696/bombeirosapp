@@ -8,10 +8,56 @@ type View = "dashboard" | "reports" | "people" | "settings" | "checklist";
 type Status = "Conforme" | "Não conforme" | "N/A";
 type Team = "Alfa" | "Bravo" | "Charlie" | "Delta";
 type Priority = "Baixa" | "Média" | "Alta" | "Crítica";
-type Firefighter = { id?: string; name: string; shift: "Diurno" | "Noturno"; tps_team: Team; teca_team: Team; hangar_united_team: Team; active: boolean };
-type Round = { id: string; protocol: string; firefighter_id?: string | null; firefighter_name: string; shift: string; tps_team: string; teca_team: string; hangar_united_team: string; conformity: number; non_conformities: number; status: "Em análise" | "Aprovado" | "Ocorrência"; created_at: string };
+type Firefighter = {
+  id?: string;
+  name: string;
+  shift: "Diurno" | "Noturno";
+  tps_team: Team;
+  teca_team: Team;
+  hangar_united_team: Team;
+  active: boolean;
+  role?: string;
+  team?: string;
+};
+type Round = {
+  id: string;
+  protocol: string;
+  firefighter_id?: string | null;
+  firefighter_name: string;
+  shift: string;
+  tps_team: string;
+  teca_team: string;
+  hangar_united_team: string;
+  sector?: string;
+  conformity: number;
+  non_conformities: number;
+  status: "Em análise" | "Aprovado" | "Ocorrência";
+  final_message?: string | null;
+  created_at: string;
+};
 type Issue = { location: string; observation: string; priority: Priority; action_taken: string; supervisor_notified: string; ss_number: string; photo: File | null };
 type AdminNotification = { id: string; round_id: string; title: string; message: string; acknowledged_at: string | null; created_at: string };
+
+function getRoundSector(round: {
+  sector?: string;
+  tps_team?: string;
+  teca_team?: string;
+  hangar_united_team?: string;
+  final_message?: string | null;
+}): string {
+  if (round.sector && round.sector.trim()) return round.sector.trim();
+  if (round.final_message) {
+    const match = round.final_message.match(/\[Setor:\s*([^\]]+)\]/);
+    if (match && match[1]) return match[1].trim();
+  }
+  if (round.tps_team && !["Alfa", "Bravo", "Charlie", "Delta"].includes(round.tps_team)) {
+    return round.tps_team.trim();
+  }
+  if (round.tps_team) {
+    return `TPS (${round.tps_team})`;
+  }
+  return "Área Operacional";
+}
 
 const checklistItems = ["Saídas de emergência sem bloqueios", "Escadas de emergência livres", "Portas corta-fogo íntegras e fechando corretamente", "Extintores acessíveis e sem avarias", "Hidrantes e mangotinhos desobstruídos", "Acionadores manuais de incêndio íntegros", "Iluminação de emergência operacional", "Sinalização de emergência visível", "Corredores e acessos livres", "Ausência de materiais combustíveis acumulados", "Equipamentos elétricos sem anormalidades", "Escadas rolantes", "Elevadores", "Ausência de vazamentos de água ou outros líquidos", "Ausência de fumaça, odor de queimado ou superaquecimento", "Objetos abandonados", "DEA em condições de uso", "Comunicação via rádio operacional", "Acesso para viaturas de emergência desobstruído", "Macas de resgate"];
 const samplePeople: Firefighter[] = [
@@ -160,6 +206,7 @@ export default function Home() {
   const [answers, setAnswers] = useState<Record<number, Status>>({});
   const [issues, setIssues] = useState<Record<number, Issue>>({});
   const [operator, setOperator] = useState(samplePeople[0].name);
+  const [sector, setSector] = useState<string>("TPS 2 (Terminal 2)");
   const [finalMessage, setFinalMessage] = useState("");
   const [showPersonModal, setShowPersonModal] = useState(false);
   const [showAdminAuthModal, setShowAdminAuthModal] = useState(false);
@@ -182,8 +229,14 @@ export default function Home() {
     } catch {}
   };
 
-  const handleLoginFirefighter = (selectedName: string) => {
+  const handleLoginFirefighter = (selectedName: string, selectedSector?: string) => {
     setOperator(selectedName);
+    if (selectedSector) {
+      setSector(selectedSector);
+      try {
+        localStorage.setItem("bombeiros_session_sector", selectedSector);
+      } catch {}
+    }
     setShowFirefighterIdentifyModal(false);
     setRole("firefighter");
     setView("checklist");
@@ -335,6 +388,10 @@ export default function Home() {
           setOperator(savedOperator);
         }
       }
+      const savedSector = localStorage.getItem("bombeiros_session_sector");
+      if (savedSector) {
+        setSector(savedSector);
+      }
     } catch {}
     setSessionLoaded(true);
 
@@ -393,6 +450,43 @@ export default function Home() {
     void applyData(true);
   };
 
+  const handleTogglePersonActive = async (person: Firefighter) => {
+    const newActive = !person.active;
+    const targetId = person.id;
+    const targetName = person.name;
+
+    // Atualização otimista imediata na UI
+    setPeople((current) =>
+      current.map((p) =>
+        (targetId && p.id === targetId) || (!targetId && p.name === targetName) ? { ...p, active: newActive } : p
+      )
+    );
+
+    if (supabase) {
+      try {
+        const query = targetId
+          ? supabase.from("firefighters").update({ active: newActive }).eq("id", targetId)
+          : supabase.from("firefighters").update({ active: newActive }).eq("name", targetName);
+
+        const { error } = await query;
+        if (error) {
+          console.error("Erro ao alterar status do bombeiro no Supabase:", error);
+          // Reverter se falhar
+          setPeople((current) =>
+            current.map((p) =>
+              (targetId && p.id === targetId) || (!targetId && p.name === targetName) ? { ...p, active: !newActive } : p
+            )
+          );
+          alert("Não foi possível atualizar o status no Supabase: " + error.message);
+        } else {
+          void applyData(true);
+        }
+      } catch (err: any) {
+        console.error("Erro de conexão ao alterar status do bombeiro:", err);
+      }
+    }
+  };
+
   const handleOpenRound = (round: Round, tab: "all" | "issues" | "conform" = "all") => {
     setSelectedRound(round);
     setSelectedRoundTab(tab);
@@ -437,12 +531,14 @@ export default function Home() {
         firefighter_id: firefighter.id ?? null,
         firefighter_name: firefighter.name,
         shift: firefighter.shift,
-        tps_team: firefighter.tps_team,
-        teca_team: firefighter.teca_team,
-        hangar_united_team: firefighter.hangar_united_team,
+        tps_team: sector,
+        teca_team: sector.toLowerCase().includes("teca") ? sector : firefighter.teca_team,
+        hangar_united_team: sector.toLowerCase().includes("hangar") ? sector : firefighter.hangar_united_team,
+        sector,
         conformity,
         non_conformities: nonConformities,
         status: nonConformities ? "Ocorrência" : "Em análise",
+        final_message: finalMessage ? `${finalMessage}\n[Setor: ${sector}]` : `[Setor: ${sector}]`,
         created_at: new Date().toISOString()
       };
 
@@ -501,13 +597,13 @@ export default function Home() {
       firefighter_id: firefighter.id ?? null,
       firefighter_name: firefighter.name,
       shift: firefighter.shift,
-      tps_team: firefighter.tps_team,
-      teca_team: firefighter.teca_team,
-      hangar_united_team: firefighter.hangar_united_team,
+      tps_team: sector,
+      teca_team: sector.toLowerCase().includes("teca") ? sector : firefighter.teca_team,
+      hangar_united_team: sector.toLowerCase().includes("hangar") ? sector : firefighter.hangar_united_team,
       conformity,
       non_conformities: nonConformities,
       status: nonConformities ? "Ocorrência" : "Em análise",
-      final_message: finalMessage || null
+      final_message: finalMessage ? `${finalMessage}\n[Setor: ${sector}]` : `[Setor: ${sector}]`
     }).select("id").single();
 
     if (error || !round) {
@@ -581,6 +677,7 @@ export default function Home() {
               protocol,
               firefighterName: firefighter.name,
               shift: firefighter.shift,
+              sector,
               nonConformities,
               items: nonConformItems,
               recipientEmails: recipientEmails.length ? recipientEmails : ["supervisoremergencia@riogaleao.com"],
@@ -689,6 +786,7 @@ export default function Home() {
         {showFirefighterIdentifyModal && (
           <FirefighterIdentifyModal
             people={people}
+            initialSector={sector}
             onClose={() => setShowFirefighterIdentifyModal(false)}
             onConfirm={handleLoginFirefighter}
           />
@@ -815,7 +913,13 @@ export default function Home() {
             onSelectRound={handleOpenRound}
           />
         )}
-        {view === "people" && role === "admin" && <People people={people} onAdd={() => setShowPersonModal(true)} />}
+        {view === "people" && role === "admin" && (
+          <People
+            people={people}
+            onAdd={() => setShowPersonModal(true)}
+            onToggleActive={handleTogglePersonActive}
+          />
+        )}
         {view === "settings" && role === "admin" && (
           <NotificationSettings
             emails={recipientEmails}
@@ -829,6 +933,8 @@ export default function Home() {
             operator={operator}
             setOperator={handleOperatorChange}
             firefighter={firefighter}
+            sector={sector}
+            setSector={setSector}
             answers={answers}
             setAnswers={setAnswers}
             issues={issues}
@@ -1294,20 +1400,37 @@ function NotificationSettings({
 
 function FirefighterIdentifyModal({
   people,
+  initialSector = "TPS 2 (Terminal 2)",
   onClose,
   onConfirm
 }: {
   people: Firefighter[];
+  initialSector?: string;
   onClose: () => void;
-  onConfirm: (selectedName: string) => void;
+  onConfirm: (selectedName: string, selectedSector: string) => void;
 }) {
-  const [selectedName, setSelectedName] = useState(people[0]?.name ?? "");
-  const firefighter = people.find((p) => p.name === selectedName);
+  const activePeople = useMemo(() => people.filter((p) => p.active !== false), [people]);
+  const [selectedName, setSelectedName] = useState(activePeople[0]?.name ?? "");
+  const [sectorOption, setSectorOption] = useState(() => {
+    const presets = [
+      "TPS 2 (Terminal 2)",
+      "TPS 1 (Terminal 1)",
+      "TECA (Terminal de Cargas)",
+      "Hangar United",
+      "Pátio de Aeronaves",
+      "Subestação / Utilidades"
+    ];
+    return presets.includes(initialSector) ? initialSector : "Outro";
+  });
+  const [customSectorText, setCustomSectorText] = useState(initialSector || "TPS 2 (Terminal 2)");
+
+  const firefighter = activePeople.find((p) => p.name === selectedName) ?? activePeople[0];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedName) {
-      onConfirm(selectedName);
+      const finalSector = (sectorOption === "Outro" ? customSectorText : sectorOption) || "Área Operacional";
+      onConfirm(selectedName, finalSector.trim());
     }
   };
 
@@ -1323,46 +1446,74 @@ function FirefighterIdentifyModal({
           <h2>Identificação do Bombeiro</h2>
         </div>
 
-        <label>
-          BOMBEIRO RESPONSÁVEL
-          <select value={selectedName} onChange={(e) => setSelectedName(e.target.value)}>
-            {people.map((p) => (
-              <option key={p.id ?? p.name} value={p.name}>
-                {p.name} ({p.shift})
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {firefighter && (
-          <div className="identity" style={{ marginTop: "12px" }}>
-            <label>
-              TURNO
-              <input readOnly value={firefighter.shift} />
-            </label>
-            <label>
-              TPS
-              <input readOnly value={firefighter.tps_team} />
-            </label>
-            <label>
-              TECA
-              <input readOnly value={firefighter.teca_team} />
-            </label>
-            <label>
-              HANGAR
-              <input readOnly value={firefighter.hangar_united_team} />
-            </label>
+        {activePeople.length === 0 ? (
+          <div style={{ padding: "20px 0", textAlign: "center", color: "#d9383a", fontSize: "13px" }}>
+            ⚠️ Nenhum bombeiro ativo encontrado no sistema. Solicite ao administrador a ativação do seu cadastro.
           </div>
-        )}
+        ) : (
+          <>
+            <label>
+              BOMBEIRO RESPONSÁVEL
+              <select value={selectedName} onChange={(e) => setSelectedName(e.target.value)}>
+                {activePeople.map((p) => (
+                  <option key={p.id ?? p.name} value={p.name}>
+                    {p.name} ({p.shift})
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        <div className="modal-actions">
-          <button type="button" className="outline" onClick={onClose}>
-            Cancelar
-          </button>
-          <button type="submit" className="primary">
-            Iniciar Ronda
-          </button>
-        </div>
+            {firefighter && (
+              <div className="identity" style={{ marginTop: "12px" }}>
+                <label>
+                  TURNO
+                  <input readOnly value={firefighter.shift} />
+                </label>
+                <label>
+                  EQUIPE
+                  <input readOnly value={`Equipe ${firefighter.tps_team || firefighter.team || "Alfa"}`} />
+                </label>
+                <label style={{ gridColumn: "span 2" }}>
+                  SETOR / LOCAL DA RONDA (ONDE VOCÊ ESTÁ NO MOMENTO)
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: "8px" }}>
+                    <select
+                      value={sectorOption}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSectorOption(val);
+                        if (val !== "Outro") setCustomSectorText(val);
+                      }}
+                    >
+                      <option value="TPS 2 (Terminal 2)">TPS 2 (Terminal 2)</option>
+                      <option value="TPS 1 (Terminal 1)">TPS 1 (Terminal 1)</option>
+                      <option value="TECA (Terminal de Cargas)">TECA (Terminal de Cargas)</option>
+                      <option value="Hangar United">Hangar United</option>
+                      <option value="Pátio de Aeronaves">Pátio de Aeronaves / Pista</option>
+                      <option value="Subestação / Utilidades">Subestação / Utilidades</option>
+                      <option value="Outro">Outro local / Especificar</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={customSectorText}
+                      onChange={(e) => setCustomSectorText(e.target.value)}
+                      placeholder="Ex.: TPS 2 - Mezanino, Pátio 3..."
+                      required
+                    />
+                  </div>
+                </label>
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button type="button" className="outline" onClick={onClose}>
+                Cancelar
+              </button>
+              <button type="submit" className="primary" disabled={!selectedName}>
+                Iniciar Ronda
+              </button>
+            </div>
+          </>
+        )}
       </form>
     </div>
   );
@@ -1449,7 +1600,7 @@ function ReportRow({ report, onClick }: { report: Round; onClick?: () => void })
       <div className="report-main">
         <strong>{report.protocol}</strong>
         <span>
-          {report.firefighter_name} · {report.shift} · TPS {report.tps_team}
+          {report.firefighter_name} · {report.shift} · {getRoundSector(report)}
         </span>
       </div>
       <span className="report-date">{dateLabel(report.created_at)}</span>
@@ -1849,9 +2000,9 @@ function RoundDetailsModal({
                       <strong>{round.shift}</strong>
                     </div>
                     <div>
-                      <label>POSTOS DE TRABALHO</label>
+                      <label>SETOR DA RONDA</label>
                       <strong style={{ fontSize: "11px" }}>
-                        TPS {round.tps_team} · TECA {round.teca_team} · Hangar {round.hangar_united_team}
+                        {getRoundSector(round)}
                       </strong>
                     </div>
                     <div>
@@ -1992,9 +2143,9 @@ function RoundDetailsModal({
                             <strong>{round.shift}</strong>
                           </div>
                           <div>
-                            <label>POSTOS DE TRABALHO</label>
+                            <label>SETOR DA RONDA</label>
                             <strong style={{ fontSize: "11px" }}>
-                              TPS {round.tps_team} · TECA {round.teca_team} · Hangar {round.hangar_united_team}
+                              {getRoundSector(round)}
                             </strong>
                           </div>
                           <div>
@@ -2494,7 +2645,7 @@ function PdfReportModal({
                           <td><strong>{r.protocol}</strong></td>
                           <td>{dateLabel(r.created_at)}</td>
                           <td><strong>{r.firefighter_name}</strong></td>
-                          <td><span>{r.shift} · TPS {r.tps_team}</span></td>
+                          <td><span>{r.shift} · {getRoundSector(r)}</span></td>
                           <td>
                             <div className="pdf-conformity-bar-wrap">
                               <strong style={{ color: fillBg, minWidth: "32px" }}>{cleanScore}%</strong>
@@ -2586,7 +2737,7 @@ function PdfReportModal({
                             <td><strong>{r.protocol}</strong></td>
                             <td>{dateLabel(r.created_at)}</td>
                             <td><strong>{r.firefighter_name}</strong></td>
-                            <td><span>{r.shift} · TPS {r.tps_team}</span></td>
+                            <td><span>{r.shift} · {getRoundSector(r)}</span></td>
                             <td>
                               <div className="pdf-conformity-bar-wrap">
                                 <strong style={{ color: fillBg, minWidth: "32px" }}>{cleanScore}%</strong>
@@ -2810,9 +2961,11 @@ function Reports({
       const matchesStatus = statusFilter === "all" || r.status === statusFilter;
 
       let matchesStation = true;
-      if (stationFilter === "TPS") matchesStation = Boolean(r.tps_team);
-      else if (stationFilter === "TECA") matchesStation = Boolean(r.teca_team);
-      else if (stationFilter === "Hangar") matchesStation = Boolean(r.hangar_united_team);
+      const sectorLower = getRoundSector(r).toLowerCase();
+      if (stationFilter === "TPS") matchesStation = sectorLower.includes("tps");
+      else if (stationFilter === "TECA") matchesStation = sectorLower.includes("teca");
+      else if (stationFilter === "Hangar") matchesStation = sectorLower.includes("hangar");
+      else if (stationFilter === "Patio") matchesStation = sectorLower.includes("pátio") || sectorLower.includes("patio");
 
       let matchesDate = true;
       const roundDate = new Date(r.created_at);
@@ -3041,10 +3194,11 @@ function Reports({
               value={stationFilter}
               onChange={(e) => setStationFilter(e.target.value)}
             >
-              <option value="all">Todos os Postos</option>
-              <option value="TPS">Posto 1 — TPS</option>
-              <option value="TECA">Posto 2 — TECA</option>
-              <option value="Hangar">Posto 3 — Hangar United</option>
+              <option value="all">Todos os Setores / Postos</option>
+              <option value="TPS">TPS (Terminais 1 e 2)</option>
+              <option value="TECA">TECA (Terminal de Cargas)</option>
+              <option value="Hangar">Hangar United</option>
+              <option value="Patio">Pátio de Aeronaves</option>
             </select>
           </div>
 
@@ -3178,7 +3332,7 @@ function Reports({
                     </div>
                   </div>
                   <span className="report-firefighter-sub">
-                    👤 <strong>{round.firefighter_name}</strong> ({round.shift}) · Posto TPS {round.tps_team}
+                    👤 <strong>{round.firefighter_name}</strong> ({round.shift}) · Setor: {getRoundSector(round)}
                   </span>
                 </div>
                 <div className="report-date-cell">
@@ -3284,45 +3438,168 @@ function Reports({
   );
 }
 
-function People({ people, onAdd }: { people: Firefighter[]; onAdd: () => void }) {
+function People({
+  people,
+  onAdd,
+  onToggleActive
+}: {
+  people: Firefighter[];
+  onAdd: () => void;
+  onToggleActive: (person: Firefighter) => Promise<void>;
+}) {
+  const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  const activeCount = people.filter((p) => p.active !== false).length;
+  const inactiveCount = people.filter((p) => p.active === false).length;
+
+  const filteredPeople = people.filter((p) => {
+    const matchesSearch = !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus =
+      filter === "all" ||
+      (filter === "active" && p.active !== false) ||
+      (filter === "inactive" && p.active === false);
+    return matchesSearch && matchesStatus;
+  });
+
+  const handleToggle = async (person: Firefighter) => {
+    const key = person.id ?? person.name;
+    setTogglingId(key);
+    try {
+      await onToggleActive(person);
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   return (
     <div className="content">
       <section className="section-head people-head">
         <div>
           <p className="eyebrow">EQUIPE</p>
           <h2>Bombeiros Cadastrados</h2>
-          <p className="muted">Escalas e postos vinculados à ronda.</p>
+          <p className="muted">Gestão do efetivo, escalas e status de ativação operacional.</p>
         </div>
         <button className="primary" onClick={onAdd}>
           + Novo bombeiro
         </button>
       </section>
+
+      {/* Estatísticas Rápidas do Efetivo */}
+      <div className="stats" style={{ marginBottom: "18px" }}>
+        <Metric label="TOTAL CADASTRADOS" value={people.length.toString()} detail="Efetivo completo no sistema" />
+        <Metric label="BOMBEIROS ATIVOS" value={activeCount.toString()} detail="Habilitados para novas rondas" />
+        <Metric
+          label="INATIVOS / AFASTADOS"
+          value={inactiveCount.toString()}
+          detail="Sem acesso para iniciar novas rondas"
+          danger={inactiveCount > 0}
+        />
+      </div>
+
+      {/* Barra de Filtro e Busca Rápida */}
+      <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "16px", flexWrap: "wrap" }}>
+        <input
+          type="text"
+          placeholder="Buscar bombeiro por nome..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{
+            flex: "1 1 260px",
+            padding: "9px 12px",
+            background: "#fff",
+            border: "1px solid var(--line)",
+            borderRadius: "4px",
+            fontSize: "12px"
+          }}
+        />
+        <div style={{ display: "flex", gap: "6px" }}>
+          <button
+            type="button"
+            className={`choice ${filter === "all" ? "conforme" : ""}`}
+            style={{ padding: "6px 12px", fontSize: "11px", minHeight: "34px" }}
+            onClick={() => setFilter("all")}
+          >
+            Todos ({people.length})
+          </button>
+          <button
+            type="button"
+            className={`choice ${filter === "active" ? "conforme" : ""}`}
+            style={{ padding: "6px 12px", fontSize: "11px", minHeight: "34px" }}
+            onClick={() => setFilter("active")}
+          >
+            Ativos ({activeCount})
+          </button>
+          <button
+            type="button"
+            className={`choice ${filter === "inactive" ? "nao-conforme" : ""}`}
+            style={{ padding: "6px 12px", fontSize: "11px", minHeight: "34px" }}
+            onClick={() => setFilter("inactive")}
+          >
+            Inativos ({inactiveCount})
+          </button>
+        </div>
+      </div>
+
       <div className="people-card">
         <div className="table-head people-table">
           <span>BOMBEIRO</span>
           <span>TURNO</span>
-          <span>TPS</span>
-          <span>TECA / HANGAR</span>
+          <span>EQUIPE</span>
           <span>STATUS</span>
+          <span style={{ textAlign: "right" }}>AÇÃO</span>
         </div>
-        {people.map((person) => (
-          <div className="person-row" key={person.id ?? person.name}>
-            <div>
-              <div className="avatar">{person.name.split(" ").slice(0, 2).map((part) => part[0]).join("")}</div>
-              <strong>{person.name}</strong>
+        {filteredPeople.map((person) => {
+          const isToggling = togglingId === (person.id ?? person.name);
+          const isActive = person.active !== false;
+
+          return (
+            <div className="person-row" key={person.id ?? person.name}>
+              <div>
+                <div className="avatar">{person.name.split(" ").slice(0, 2).map((part) => part[0]).join("")}</div>
+                <div>
+                  <strong>{person.name}</strong>
+                  {person.role && <span style={{ display: "block", fontSize: "10px", color: "#888" }}>{person.role}</span>}
+                </div>
+              </div>
+              <span>{person.shift}</span>
+              <span>
+                <Tag>{person.tps_team || person.team || "Alfa"}</Tag>
+              </span>
+              <span>
+                <Tag tone={isActive ? "good" : "neutral"}>{isActive ? "Ativo" : "Inativo"}</Tag>
+              </span>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  disabled={isToggling}
+                  onClick={() => handleToggle(person)}
+                  style={{
+                    padding: "6px 14px",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    borderRadius: "4px",
+                    cursor: isToggling ? "not-allowed" : "pointer",
+                    border: isActive ? "1px solid #d9534f" : "1px solid #11704e",
+                    background: isActive ? "#fff5f5" : "#e8f5ee",
+                    color: isActive ? "#c9302c" : "#11704e",
+                    transition: "all 0.15s ease",
+                    whiteSpace: "nowrap"
+                  }}
+                  title={isActive ? "Desativar bombeiro (não aparecerá para novas rondas)" : "Ativar bombeiro para iniciar rondas"}
+                >
+                  {isToggling ? "Salvando..." : isActive ? "Desativar" : "Ativar"}
+                </button>
+              </div>
             </div>
-            <span>{person.shift}</span>
-            <span>
-              <Tag>{person.tps_team}</Tag>
-            </span>
-            <span>
-              TECA {person.teca_team} · Hangar {person.hangar_united_team}
-            </span>
-            <span>
-              <Tag tone={person.active ? "good" : "neutral"}>{person.active ? "Ativo" : "Inativo"}</Tag>
-            </span>
+          );
+        })}
+        {filteredPeople.length === 0 && (
+          <div className="empty-line" style={{ textAlign: "center", padding: "24px" }}>
+            Nenhum bombeiro encontrado com os filtros selecionados.
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
@@ -3333,6 +3610,8 @@ function Checklist({
   operator,
   setOperator,
   firefighter,
+  sector,
+  setSector,
   answers,
   setAnswers,
   issues,
@@ -3350,6 +3629,8 @@ function Checklist({
   operator: string;
   setOperator: (value: string) => void;
   firefighter?: Firefighter;
+  sector: string;
+  setSector: (value: string) => void;
   answers: Record<number, Status>;
   setAnswers: React.Dispatch<React.SetStateAction<Record<number, Status>>>;
   issues: Record<number, Issue>;
@@ -3363,6 +3644,17 @@ function Checklist({
   submittedProtocol: string | null;
   onSubmit: () => void;
 }) {
+  const activePeople = useMemo(() => people.filter((p) => p.active !== false), [people]);
+
+  const predefinedSectors = [
+    "TPS 2 (Terminal 2)",
+    "TPS 1 (Terminal 1)",
+    "TECA (Terminal de Cargas)",
+    "Hangar United",
+    "Pátio de Aeronaves",
+    "Subestação / Utilidades"
+  ];
+
   const updateIssue = (index: number, patch: Partial<Issue>) =>
     setIssues((current) => ({
       ...current,
@@ -3384,7 +3676,7 @@ function Checklist({
           <label>
             BOMBEIRO RESPONSÁVEL
             <select value={operator} onChange={(event) => setOperator(event.target.value)}>
-              {people.map((person) => (
+              {activePeople.map((person) => (
                 <option key={person.id ?? person.name}>{person.name}</option>
               ))}
             </select>
@@ -3393,17 +3685,32 @@ function Checklist({
             TURNO
             <input readOnly value={firefighter?.shift ?? ""} />
           </label>
-          <label>
-            TPS
-            <input readOnly value={firefighter?.tps_team ?? ""} />
-          </label>
-          <label>
-            TECA
-            <input readOnly value={firefighter?.teca_team ?? ""} />
-          </label>
-          <label>
-            HANGAR UNITED
-            <input readOnly value={firefighter?.hangar_united_team ?? ""} />
+          <label style={{ gridColumn: "span 2" }}>
+            SETOR / LOCAL DA RONDA (ONDE VOCÊ ESTÁ EM CAMPO)
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: "8px" }}>
+              <select
+                value={predefinedSectors.includes(sector) ? sector : "Outro"}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val !== "Outro") setSector(val);
+                }}
+              >
+                <option value="TPS 2 (Terminal 2)">TPS 2 (Terminal 2)</option>
+                <option value="TPS 1 (Terminal 1)">TPS 1 (Terminal 1)</option>
+                <option value="TECA (Terminal de Cargas)">TECA (Terminal de Cargas)</option>
+                <option value="Hangar United">Hangar United</option>
+                <option value="Pátio de Aeronaves">Pátio de Aeronaves / Pista</option>
+                <option value="Subestação / Utilidades">Subestação / Utilidades</option>
+                <option value="Outro">Outro local / Especificar</option>
+              </select>
+              <input
+                type="text"
+                value={sector}
+                onChange={(e) => setSector(e.target.value)}
+                placeholder="Ex.: TPS 2 - Mezanino, Pátio 3, TECA Bloco B..."
+                required
+              />
+            </div>
           </label>
         </section>
         <section className="check-card">
@@ -3598,18 +3905,10 @@ function Checklist({
 function PersonModal({ onClose, onSave }: { onClose: () => void; onSave: (person: Firefighter) => Promise<void> }) {
   const [name, setName] = useState("");
   const [shift, setShift] = useState<"Diurno" | "Noturno">("Diurno");
-  const [tps, setTps] = useState<Team>("Alfa");
-  const [teca, setTeca] = useState<Team>("Alfa");
-  const [hangar, setHangar] = useState<Team>("Alfa");
+  const [team, setTeam] = useState<Team>("Alfa");
+  const [role, setRole] = useState("Bombeiro Civil de Ronda");
   const [error, setError] = useState("");
-
-  const teamOptions = (value: Team, setValue: (value: Team) => void) => (
-    <select value={value} onChange={(event) => setValue(event.target.value as Team)}>
-      {(["Alfa", "Bravo", "Charlie", "Delta"] as Team[]).map((team) => (
-        <option key={team}>{team}</option>
-      ))}
-    </select>
-  );
+  const [saving, setSaving] = useState(false);
 
   return (
     <div className="modal-backdrop">
@@ -3617,10 +3916,22 @@ function PersonModal({ onClose, onSave }: { onClose: () => void; onSave: (person
         className="modal"
         onSubmit={async (event) => {
           event.preventDefault();
+          if (!name.trim()) return;
+          setSaving(true);
           try {
-            await onSave({ name: name.trim(), shift, tps_team: tps, teca_team: teca, hangar_united_team: hangar, active: true });
+            await onSave({
+              name: name.trim(),
+              shift,
+              tps_team: team,
+              teca_team: team,
+              hangar_united_team: team,
+              team,
+              role,
+              active: true
+            });
           } catch {
             setError("Não foi possível salvar o bombeiro.");
+            setSaving(false);
           }
         }}
       >
@@ -3628,38 +3939,44 @@ function PersonModal({ onClose, onSave }: { onClose: () => void; onSave: (person
           ×
         </button>
         <p className="eyebrow">NOVO CADASTRO</p>
-        <h2>Cadastrar bombeiro</h2>
+        <h2>Cadastrar Bombeiro</h2>
+        <p className="muted" style={{ fontSize: "11px", marginBottom: "14px" }}>
+          O bombeiro será cadastrado com status <strong>Ativo</strong>. Durante o serviço, ele poderá indicar livremente o setor/local onde está realizando a ronda.
+        </p>
         <label>
           Nome completo
-          <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} />
-        </label>
-        <label>
-          Turno
-          <select value={shift} onChange={(event) => setShift(event.target.value as "Diurno" | "Noturno")}>
-            <option>Diurno</option>
-            <option>Noturno</option>
-          </select>
+          <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Lucas Rodrigues Borges" />
         </label>
         <div className="form-grid">
           <label>
-            Posto 1 — TPS
-            {teamOptions(tps, setTps)}
+            Turno de escala
+            <select value={shift} onChange={(event) => setShift(event.target.value as "Diurno" | "Noturno")}>
+              <option>Diurno</option>
+              <option>Noturno</option>
+            </select>
           </label>
           <label>
-            Posto 2 — TECA
-            {teamOptions(teca, setTeca)}
+            Equipe / Turma
+            <select value={team} onChange={(event) => setTeam(event.target.value as Team)}>
+              <option value="Alfa">Equipe Alfa</option>
+              <option value="Bravo">Equipe Bravo</option>
+              <option value="Charlie">Equipe Charlie</option>
+              <option value="Delta">Equipe Delta</option>
+            </select>
           </label>
         </div>
         <label>
-          Posto 3 — Hangar United
-          {teamOptions(hangar, setHangar)}
+          Função / Especialidade (Opcional)
+          <input value={role} onChange={(event) => setRole(event.target.value)} placeholder="Ex.: BC TPS — Condutor, Brigadista, etc." />
         </label>
         {error && <p className="form-error">{error}</p>}
         <div className="modal-actions">
           <button type="button" className="outline" onClick={onClose}>
             Cancelar
           </button>
-          <button className="primary">Salvar cadastro</button>
+          <button className="primary" disabled={saving}>
+            {saving ? "Salvando..." : "Salvar Cadastro"}
+          </button>
         </div>
       </form>
     </div>

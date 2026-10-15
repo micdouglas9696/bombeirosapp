@@ -24,6 +24,7 @@ interface NotifyPayload {
   protocol?: string;
   firefighterName?: string;
   shift?: string;
+  sector?: string;
   nonConformities?: number;
   items?: OccurrenceItem[];
   recipientEmails?: string[];
@@ -36,6 +37,7 @@ function buildWhatsAppMessage({
   protocol,
   firefighterName,
   shift,
+  sector,
   nonConformities,
   items,
   createdAt,
@@ -44,6 +46,7 @@ function buildWhatsAppMessage({
   protocol: string;
   firefighterName: string;
   shift: string;
+  sector?: string;
   nonConformities: number;
   items: OccurrenceItem[];
   createdAt: string;
@@ -82,7 +85,8 @@ function buildWhatsAppMessage({
     "🚨 *ALERTA OPERACIONAL DE OCORRÊNCIA — ENSEG / RIOgaleão* 🚨",
     "",
     `📋 *Ronda / Protocolo:* ${protocol}`,
-    `👨‍🚒 *Bombeiro Responsável:* ${firefighterName} (${shift || "Turno Regular"})`,
+    `👨‍🚒 *Bombeiro Responsável:* ${firefighterName}`,
+    `📍 *Setor / Posto:* ${sector || "Área Operacional"} (${shift || "Turno Regular"})`,
     `⚠️ *Não Conformidades:* ${nonConformities} item(ns) registrado(s)`,
     `📅 *Data/Hora:* ${createdAt}`,
     "",
@@ -175,6 +179,7 @@ async function sendViaResend({
   protocol,
   firefighterName,
   shift,
+  sector,
   nonConformities,
   items,
   createdAt,
@@ -186,6 +191,7 @@ async function sendViaResend({
   protocol: string;
   firefighterName: string;
   shift: string;
+  sector?: string;
   nonConformities: number;
   items: OccurrenceItem[];
   createdAt: string;
@@ -265,7 +271,11 @@ async function sendViaResend({
               <td style="padding: 10px 14px; border-bottom: 1px solid #ededeb; font-weight: 600;">${firefighterName}</td>
             </tr>
             <tr>
-              <td style="padding: 10px 14px; border-bottom: 1px solid #ededeb; color: #666;">Turno / Posto:</td>
+              <td style="padding: 10px 14px; border-bottom: 1px solid #ededeb; color: #666;">Setor / Local da Ronda:</td>
+              <td style="padding: 10px 14px; border-bottom: 1px solid #ededeb; font-weight: 600; color: #111;">${sector || "Área Operacional"}</td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 14px; border-bottom: 1px solid #ededeb; color: #666;">Turno:</td>
               <td style="padding: 10px 14px; border-bottom: 1px solid #ededeb;">${shift || "Turno Regular"}</td>
             </tr>
             <tr>
@@ -393,6 +403,7 @@ export async function POST(request: Request) {
     const protocol = body.protocol || `TEST-${Date.now().toString().slice(-4)}`;
     const firefighterName = body.firefighterName || "Supervisor do Posto";
     const shift = body.shift || "Turno Operacional";
+    const sector = body.sector || "";
     const nonConformities = body.nonConformities ?? 1;
     const items = body.items || [];
     const isTest = Boolean(body.isTest);
@@ -417,6 +428,7 @@ export async function POST(request: Request) {
       protocol,
       firefighterName,
       shift,
+      sector,
       nonConformities,
       items,
       createdAt,
@@ -442,6 +454,7 @@ export async function POST(request: Request) {
       protocol,
       firefighterName,
       shift,
+      sector,
       nonConformities,
       items,
       createdAt,
