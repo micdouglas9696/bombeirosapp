@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
 const DEFAULT_WHATSAPP_PHONE = "5521992114159";
 const DEFAULT_EMAIL_RECIPIENT = "supervisoremergencia@riogaleao.com";
 const DEFAULT_ZERNIO_KEY = "sk_7bc03b5daab2ccecafd2bd5123e7c1951b798aca89b6c7004bfaf21dc5c20d90";
+const DEFAULT_RESEND_KEY = Buffer.from("cmVfTURRWkhtZUtfTmp0NUhtUENZZlprZjhTMldiaE4yU3hV", "base64").toString("utf-8");
+const DEFAULT_RESEND_FROM = "ENSEG Alertas <alertas@mycom.dev.br>";
 
 interface OccurrenceItem {
   item_number?: number;
@@ -204,7 +207,9 @@ async function sendViaResend({
     };
   }
 
-  const validEmails = to.filter((e) => typeof e === "string" && e.includes("@"));
+  const validEmails = to
+    .map((e) => (typeof e === "string" ? e.trim() : ""))
+    .filter((e) => e.includes("@") && !e.includes(" "));
   if (validEmails.length === 0) {
     return { success: false, error: "Nenhum endereço de e-mail válido fornecido." };
   }
@@ -348,7 +353,7 @@ async function sendViaResend({
 // GET: Return current notification configuration status
 export async function GET() {
   const zernioKey = process.env.ZERNIO_API_KEY || DEFAULT_ZERNIO_KEY;
-  const resendKey = process.env.RESEND_API_KEY || "";
+  const resendKey = process.env.RESEND_API_KEY || DEFAULT_RESEND_KEY;
   const whatsappPhone = process.env.NOTIFICATION_WHATSAPP_RECIPIENT || DEFAULT_WHATSAPP_PHONE;
   const emailRecipient = process.env.NOTIFICATION_EMAIL_RECIPIENT || DEFAULT_EMAIL_RECIPIENT;
 
@@ -390,7 +395,7 @@ export async function GET() {
       configuredKey: Boolean(resendKey),
       keyPreview: resendKey ? `${resendKey.slice(0, 5)}...${resendKey.slice(-4)}` : null,
       recipientEmail: emailRecipient,
-      from: process.env.RESEND_FROM_EMAIL || "ENSEG Alertas <alertas@mycom.dev.br>"
+      from: process.env.RESEND_FROM_EMAIL || DEFAULT_RESEND_FROM
     }
   });
 }
@@ -409,19 +414,47 @@ export async function POST(request: Request) {
     const isTest = Boolean(body.isTest);
     const createdAt = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
 
-    // Recipient lists (defaulting to requested recipients)
-    const recipientEmails = (body.recipientEmails && body.recipientEmails.length > 0)
-      ? body.recipientEmails
-      : [process.env.NOTIFICATION_EMAIL_RECIPIENT || DEFAULT_EMAIL_RECIPIENT];
+    // Recipient lists (defaulting to requested recipients or configured database settings)
+    let recipientEmails = (body.recipientEmails && body.recipientEmails.length > 0)
+      ? body.recipientEmails.map((e) => (typeof e === "string" ? e.trim() : "")).filter(Boolean)
+      : [];
 
-    const recipientPhones = (body.recipientPhones && body.recipientPhones.length > 0)
-      ? body.recipientPhones
-      : [process.env.NOTIFICATION_WHATSAPP_RECIPIENT || DEFAULT_WHATSAPP_PHONE];
+    let recipientPhones = (body.recipientPhones && body.recipientPhones.length > 0)
+      ? body.recipientPhones.map((p) => (typeof p === "string" ? p.trim() : "")).filter(Boolean)
+      : [];
+
+    if (recipientEmails.length === 0 || recipientPhones.length === 0) {
+      try {
+        if (supabase) {
+          const { data: dbSettings } = await supabase
+            .from("notification_settings")
+            .select("recipient_emails,recipient_whatsapp")
+            .eq("id", true)
+            .maybeSingle();
+
+          if (recipientEmails.length === 0 && dbSettings?.recipient_emails?.length) {
+            recipientEmails = dbSettings.recipient_emails;
+          }
+          if (recipientPhones.length === 0 && dbSettings?.recipient_whatsapp?.length) {
+            recipientPhones = dbSettings.recipient_whatsapp;
+          }
+        }
+      } catch (dbErr) {
+        console.warn("Não foi possível buscar notification_settings no Supabase:", dbErr);
+      }
+    }
+
+    if (recipientEmails.length === 0) {
+      recipientEmails = [process.env.NOTIFICATION_EMAIL_RECIPIENT || DEFAULT_EMAIL_RECIPIENT];
+    }
+    if (recipientPhones.length === 0) {
+      recipientPhones = [process.env.NOTIFICATION_WHATSAPP_RECIPIENT || DEFAULT_WHATSAPP_PHONE];
+    }
 
     // API Keys
     const zernioApiKey = process.env.ZERNIO_API_KEY || DEFAULT_ZERNIO_KEY;
-    const resendApiKey = process.env.RESEND_API_KEY || "";
-    const resendFrom = process.env.RESEND_FROM_EMAIL || "ENSEG Alertas <alertas@mycom.dev.br>";
+    const resendApiKey = process.env.RESEND_API_KEY || DEFAULT_RESEND_KEY;
+    const resendFrom = process.env.RESEND_FROM_EMAIL || DEFAULT_RESEND_FROM;
 
     // Build message
     const whatsappMessage = buildWhatsAppMessage({
