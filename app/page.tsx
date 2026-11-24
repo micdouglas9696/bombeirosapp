@@ -37,6 +37,20 @@ type Round = {
 };
 type Issue = { location: string; observation: string; priority: Priority; action_taken: string; supervisor_notified: string; ss_number: string; photo: File | null };
 type AdminNotification = { id: string; round_id: string; title: string; message: string; acknowledged_at: string | null; created_at: string };
+type RoundAnswer = {
+  id?: string;
+  round_id: string;
+  item_number: number;
+  item_text: string;
+  status: Status;
+  location?: string | null;
+  observation?: string | null;
+  priority?: Priority | null;
+  action_taken?: string | null;
+  supervisor_notified?: string | null;
+  ss_number?: string | null;
+  photo_path?: string | null;
+};
 
 function getRoundSector(round: {
   sector?: string;
@@ -101,6 +115,69 @@ function getChecklistItemsForSector(sector?: string | null): string[] {
     return [...baseChecklistItems, ...unitedAdditionalItems];
   }
   return baseChecklistItems;
+}
+
+function encodeExtraAnswersTag(extraRows: RoundAnswer[]): string {
+  const compact = extraRows.map((r) => ({
+    n: r.item_number,
+    t: r.item_text,
+    s: r.status,
+    l: r.location,
+    o: r.observation,
+    p: r.priority,
+    a: r.action_taken,
+    sn: r.supervisor_notified,
+    ss: r.ss_number,
+    ph: r.photo_path
+  }));
+  const json = JSON.stringify(compact);
+  const bytes = new TextEncoder().encode(json);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  return `[EXTRA_ANSWERS_B64:${btoa(bin)}]`;
+}
+
+function decodeExtraAnswersTag(finalMessage: string | null | undefined, roundId: string): RoundAnswer[] {
+  if (!finalMessage) return [];
+  const match = finalMessage.match(/\[EXTRA_ANSWERS_B64:([A-Za-z0-9+/=]+)\]/);
+  if (!match || !match[1]) return [];
+  try {
+    const bin = atob(match[1]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i);
+    }
+    const json = new TextDecoder().decode(bytes);
+    const parsed = JSON.parse(json) as Array<{
+      n: number;
+      t: string;
+      s: Status;
+      l?: string | null;
+      o?: string | null;
+      p?: Priority | null;
+      a?: string | null;
+      sn?: string | null;
+      ss?: string | null;
+      ph?: string | null;
+    }>;
+    return parsed.map((item) => ({
+      round_id: roundId,
+      item_number: item.n,
+      item_text: item.t,
+      status: item.s,
+      location: item.l ?? null,
+      observation: item.o ?? null,
+      priority: item.p ?? null,
+      action_taken: item.a ?? null,
+      supervisor_notified: item.sn ?? null,
+      ss_number: item.ss ?? null,
+      photo_path: item.ph ?? null
+    }));
+  } catch {
+    return [];
+  }
 }
 
 const checklistItems = baseChecklistItems;
@@ -377,7 +454,7 @@ export default function Home() {
     while (hasMore) {
       const { data, error } = await supabase
         .from("operational_rounds")
-        .select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,created_at")
+        .select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,final_message,created_at")
         .order("created_at", { ascending: false })
         .range(from, from + batchSize - 1);
 
@@ -607,7 +684,7 @@ export default function Home() {
     if (supabase) {
       const { data } = await supabase
         .from("operational_rounds")
-        .select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,created_at")
+        .select("id,protocol,firefighter_name,shift,tps_team,teca_team,hangar_united_team,conformity,non_conformities,status,final_message,created_at")
         .eq("id", roundId)
         .maybeSingle();
       if (data) {
@@ -697,6 +774,8 @@ export default function Home() {
       return;
     }
 
+    const baseFinalMessage = finalMessage ? `${finalMessage}\n[Setor: ${sector}]` : `[Setor: ${sector}]`;
+
     const { data: round, error } = await client.from("operational_rounds").insert({
       protocol,
       firefighter_id: firefighter.id ?? null,
@@ -708,7 +787,7 @@ export default function Home() {
       conformity,
       non_conformities: nonConformities,
       status: nonConformities ? "Ocorrência" : "Em análise",
-      final_message: finalMessage ? `${finalMessage}\n[Setor: ${sector}]` : `[Setor: ${sector}]`
+      final_message: baseFinalMessage
     }).select("id").single();
 
     if (error || !round) {
@@ -718,7 +797,7 @@ export default function Home() {
     }
 
     try {
-      const rows = await Promise.all(currentChecklistItems.map(async (item, index) => {
+      const rows: RoundAnswer[] = await Promise.all(currentChecklistItems.map(async (item, index) => {
         const issue = issues[index];
         let photo_path: string | null = null;
         if (answers[index] === "Não conforme" && issue?.photo) {
@@ -747,7 +826,7 @@ export default function Home() {
           round_id: round.id,
           item_number: index + 1,
           item_text: item,
-          status: answers[index],
+          status: answers[index] || "Conforme",
           location: issue?.location || null,
           observation: issue?.observation || null,
           priority: answers[index] === "Não conforme" ? issue?.priority ?? "Média" : null,
@@ -758,7 +837,30 @@ export default function Home() {
         };
       }));
       const { error: answersError } = await client.from("round_answers").insert(rows);
-      if (answersError) throw answersError;
+      if (answersError) {
+        const isItemNumberConstraint =
+          rows.length > 20 &&
+          (answersError.code === "23514" ||
+            answersError.message?.includes("round_answers_item_number_check") ||
+            answersError.message?.includes("item_number"));
+
+        if (!isItemNumberConstraint) {
+          throw answersError;
+        }
+
+        // Fallback automático caso o banco ainda possua check (item_number between 1 and 20)
+        const baseRows = rows.slice(0, 20);
+        const extraRows = rows.slice(20);
+        const { error: baseAnswersError } = await client.from("round_answers").insert(baseRows);
+        if (baseAnswersError) throw baseAnswersError;
+
+        const updatedFinalMessage = `${baseFinalMessage}\n${encodeExtraAnswersTag(extraRows)}`;
+        const { error: updateMsgError } = await client
+          .from("operational_rounds")
+          .update({ final_message: updatedFinalMessage })
+          .eq("id", round.id);
+        if (updateMsgError) throw updateMsgError;
+      }
 
       // Armazena também em demoAnswersMap para acesso instantâneo no cliente
       demoAnswersMap.set(round.id, rows);
@@ -807,7 +909,16 @@ export default function Home() {
       setFinalMessage("");
       await applyData();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Falha ao salvar o detalhamento.");
+      try {
+        await client.from("operational_rounds").delete().eq("id", round.id);
+      } catch {}
+      const errMsg =
+        error instanceof Error
+          ? error.message
+          : typeof error === "object" && error !== null && "message" in error
+          ? String((error as { message: unknown }).message)
+          : "Falha ao salvar o detalhamento.";
+      setMessage(errMsg || "Falha ao salvar o detalhamento.");
     } finally {
       setSaving(false);
     }
@@ -1606,9 +1717,9 @@ function FirefighterIdentifyModal({
                     <option value="Delta">Equipe Delta</option>
                   </select>
                 </label>
-                <label style={{ gridColumn: "span 2" }}>
+                <label className="identity-sector-label">
                   SETOR / LOCAL DA RONDA (ONDE VOCÊ ESTÁ NO MOMENTO)
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: "8px" }}>
+                  <div className="identity-sector-inputs">
                     <select
                       value={sectorOption}
                       onChange={(e) => {
@@ -1745,21 +1856,6 @@ function ReportRow({ report, onClick }: { report: Round; onClick?: () => void })
     </article>
   );
 }
-
-type RoundAnswer = {
-  id?: string;
-  round_id: string;
-  item_number: number;
-  item_text: string;
-  status: Status;
-  location?: string | null;
-  observation?: string | null;
-  priority?: Priority | null;
-  action_taken?: string | null;
-  supervisor_notified?: string | null;
-  ss_number?: string | null;
-  photo_path?: string | null;
-};
 
 function AuditIssueDetail({
   ans,
@@ -1973,8 +2069,25 @@ function RoundDetailsModal({
           .order("item_number");
 
         if (!error && data && data.length > 0) {
+          const baseAnswers = data as RoundAnswer[];
+          let finalMsg = round.final_message;
+          if (!finalMsg && baseAnswers.length <= 20) {
+            const { data: roundMeta } = await supabase
+              .from("operational_rounds")
+              .select("final_message")
+              .eq("id", round.id)
+              .maybeSingle();
+            finalMsg = roundMeta?.final_message ?? null;
+          }
+          const extraAnswers = decodeExtraAnswersTag(finalMsg, round.id);
+          const existingNumbers = new Set(baseAnswers.map((a) => a.item_number));
+          const merged = [
+            ...baseAnswers,
+            ...extraAnswers.filter((a) => !existingNumbers.has(a.item_number))
+          ].sort((a, b) => a.item_number - b.item_number);
+
           if (isMounted) {
-            setAnswers(data as RoundAnswer[]);
+            setAnswers(merged);
             setLoading(false);
           }
           return;
@@ -3842,9 +3955,9 @@ function Checklist({
               <option value="Delta">Equipe Delta</option>
             </select>
           </label>
-          <label style={{ gridColumn: "span 2" }}>
+          <label className="identity-sector-label">
             SETOR / LOCAL DA RONDA (ONDE VOCÊ ESTÁ EM CAMPO)
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: "8px" }}>
+            <div className="identity-sector-inputs">
               <select
                 value={predefinedSectors.includes(sector) ? sector : "Outro"}
                 onChange={(e) => {

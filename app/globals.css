@@ -12,6 +12,7 @@
 }
 
 * { box-sizing: border-box; } 
+html, body { max-width: 100%; overflow-x: hidden; }
 body { margin: 0; background: var(--surface); color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
 
 .config-warning { margin: 16px 46px 0; padding: 11px 14px; background: #fff4dc; border: 1px solid #f0cf92; color: #725116; font-size: 12px; }
@@ -168,11 +169,15 @@ button { cursor: pointer; }
 
 /* Checklist Layout */
 .checklist-layout { display: grid; grid-template-columns: minmax(0,1fr) 270px; gap: 22px; align-items: start; }
-.check-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 18px; }
-.identity { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; background: #fff; border: 1px solid var(--line); padding: 16px; margin-bottom: 14px; }
-.identity label, .modal label { display: grid; gap: 6px; color: #71726d; font-size: 10px; letter-spacing: .8px; font-weight: bold; }
-.identity select, .modal input, .modal select { border: 1px solid #deded9; background: #fff; padding: 10px; color: #272824; font-size: 12px; outline: none; border-radius: 4px; }
-.identity input { border: 1px solid #deded9; background: #f7f7f5; padding: 10px; color: #272824; font-size: 12px; outline: none; }
+.checklist-layout > div, .check-card, .check-row, .check-header { min-width: 0; max-width: 100%; }
+.check-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 18px; gap: 12px; }
+.check-header > div { min-width: 0; }
+.identity { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; background: #fff; border: 1px solid var(--line); padding: 16px; margin-bottom: 14px; min-width: 0; max-width: 100%; }
+.identity label, .modal label { display: grid; gap: 6px; color: #71726d; font-size: 10px; letter-spacing: .8px; font-weight: bold; min-width: 0; }
+.identity-sector-label { grid-column: span 2; }
+.identity-sector-inputs { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.3fr); gap: 8px; min-width: 0; }
+.identity select, .modal input, .modal select { border: 1px solid #deded9; background: #fff; padding: 10px; color: #272824; font-size: 12px; outline: none; border-radius: 4px; width: 100%; min-width: 0; max-width: 100%; }
+.identity input { border: 1px solid #deded9; background: #f7f7f5; padding: 10px; color: #272824; font-size: 12px; outline: none; width: 100%; min-width: 0; max-width: 100%; }
 .check-title { display: grid; grid-template-columns: 1fr 255px; gap: 10px; padding: 13px 18px; color: #777873; background: #fafaf8; font-size: 9px; letter-spacing: 1px; font-weight: bold; }
 .check-row { padding: 14px 18px; border-bottom: 1px solid #e9e9e4; display: grid; grid-template-columns: 1fr 255px; align-items: center; gap: 10px; }
 .check-row>div:first-child { display: flex; gap: 14px; align-items: center; }
@@ -449,7 +454,7 @@ button { cursor: pointer; }
 .mobile-progress-bar { display: none; }
 
 @media (max-width: 940px) { 
-  .app-shell { grid-template-columns: 1fr; }
+  .app-shell { grid-template-columns: minmax(0, 1fr); }
   .sidebar { 
     position: relative; 
     height: auto; 
@@ -509,9 +514,10 @@ button { cursor: pointer; }
   }
   .topbar strong { font-size: 17px; }
   .date { display: none; }
+  .config-warning { margin: 12px 14px 0; }
   .content { padding: 18px 14px 40px; }
-  .stats { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .checklist-layout { grid-template-columns: 1fr; gap: 16px; padding-bottom: 96px !important; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .checklist-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; padding-bottom: 96px !important; }
   .progress-panel { position: relative; top: auto; border-radius: 8px; padding: 18px; }
   .hero { padding: 22px 18px; min-height: auto; }
   .hero h1 { font-size: 24px; }
@@ -534,7 +540,7 @@ button { cursor: pointer; }
   }
   .mobile-progress-info { display: flex; flex-direction: column; gap: 2px; }
   .mobile-progress-info strong { color: #fff; font-size: 12px; }
-  .mobile-progress-info span { color: #a0a09a; font-size: 10px; }
+  .mobile-progress-info span { color: #d0d0ca; font-size: 10px; }
   .mobile-progress-bar .primary { padding: 9px 13px; font-size: 11px; border-radius: 4px; min-height: 38px; }
 }
 
@@ -875,16 +881,33 @@ button { cursor: pointer; }
   
   /* Identificação do Bombeiro na Ronda */
   .identity { 
-    grid-template-columns: 1fr; 
+    grid-template-columns: minmax(0, 1fr); 
     gap: 10px; 
     padding: 14px; 
     border-radius: 8px;
   }
+  .identity-sector-label {
+    grid-column: auto !important;
+  }
+  .identity-sector-inputs {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
   .identity select, .identity input {
     min-height: 44px;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
   
   /* Checklist de Inspeção */
+  .check-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .check-header > div {
+    min-width: 0;
+    flex: 1 1 200px;
+  }
   .check-title { display: none; }
   .check-row { 
     display: flex;
@@ -895,12 +918,15 @@ button { cursor: pointer; }
     margin-bottom: 8px;
     border: 1px solid #e8e8e3;
     background: #ffffff;
+    width: 100%;
+    max-width: 100%;
   }
   .check-row > div:first-child {
     display: flex;
     align-items: flex-start;
     gap: 10px;
     width: 100%;
+    min-width: 0;
   }
   .check-row b { 
     display: inline-flex;
@@ -921,15 +947,19 @@ button { cursor: pointer; }
     color: #1e1f24;
     font-weight: 600;
     flex: 1;
+    min-width: 0;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
   .choice-set { 
     display: grid;
-    grid-template-columns: repeat(3, 1fr); 
+    grid-template-columns: repeat(3, minmax(0, 1fr)); 
     gap: 6px; 
     width: 100%; 
   }
   .choice { 
     min-height: 48px; 
+    min-width: 0;
     border-radius: 8px; 
     font-size: 14px; 
     display: flex; 
