@@ -59,7 +59,51 @@ function getRoundSector(round: {
   return "Área Operacional";
 }
 
-const checklistItems = ["Saídas de emergência sem bloqueios", "Escadas de emergência livres", "Portas corta-fogo íntegras e fechando corretamente", "Extintores acessíveis e sem avarias", "Hidrantes e mangotinhos desobstruídos", "Acionadores manuais de incêndio íntegros", "Iluminação de emergência operacional", "Sinalização de emergência visível", "Corredores e acessos livres", "Ausência de materiais combustíveis acumulados", "Equipamentos elétricos sem anormalidades", "Escadas rolantes", "Elevadores", "Ausência de vazamentos de água ou outros líquidos", "Ausência de fumaça, odor de queimado ou superaquecimento", "Objetos abandonados", "DEA em condições de uso", "Comunicação via rádio operacional", "Acesso para viaturas de emergência desobstruído", "Macas de resgate"];
+const baseChecklistItems = [
+  "Saídas de emergência sem bloqueios",
+  "Escadas de emergência livres",
+  "Portas corta-fogo íntegras e fechando corretamente",
+  "Extintores acessíveis e sem avarias",
+  "Hidrantes e mangotinhos desobstruídos",
+  "Acionadores manuais de incêndio íntegros",
+  "Iluminação de emergência operacional",
+  "Sinalização de emergência visível",
+  "Corredores e acessos livres",
+  "Ausência de materiais combustíveis acumulados",
+  "Equipamentos elétricos sem anormalidades",
+  "Escadas rolantes",
+  "Elevadores",
+  "Ausência de vazamentos de água ou outros líquidos",
+  "Ausência de fumaça, odor de queimado ou superaquecimento",
+  "Objetos abandonados",
+  "DEA em condições de uso",
+  "Comunicação via rádio operacional",
+  "Acesso para viaturas de emergência desobstruído",
+  "Macas de resgate"
+];
+
+// Itens adicionais específicos para o Hangar da UNITED (Demanda Oséias)
+const unitedAdditionalItems = [
+  "Hangar United — Bacia de contenção e canaletas de drenagem de combustíveis íntegras",
+  "Hangar United — Sistema fixo de espuma (AFFF) e canhões de combate operacionais",
+  "Hangar United — Cabos de aterramento estático de aeronaves íntegros e posicionados",
+  "Hangar United — Armazenamento de produtos inflamáveis, tintas e solventes devidamente isolado",
+  "Hangar United — Chuveiro lava-olhos de emergência e kit de mitigação (SOPEP) operacionais"
+];
+
+function isUnitedSector(sector?: string | null): boolean {
+  if (!sector) return false;
+  return sector.toLowerCase().includes("united");
+}
+
+function getChecklistItemsForSector(sector?: string | null): string[] {
+  if (isUnitedSector(sector)) {
+    return [...baseChecklistItems, ...unitedAdditionalItems];
+  }
+  return baseChecklistItems;
+}
+
+const checklistItems = baseChecklistItems;
 const samplePeople: Firefighter[] = [
   { name: "Leandro Dantas dos Santos", shift: "Diurno", tps_team: "Alfa", teca_team: "Alfa", hangar_united_team: "Alfa", active: true },
   { name: "Jorge da Silva Fernandes", shift: "Noturno", tps_team: "Bravo", teca_team: "Bravo", hangar_united_team: "Bravo", active: true },
@@ -205,7 +249,9 @@ export default function Home() {
   const [recipientPhones, setRecipientPhones] = useState<string[]>(["5521992114159"]);
   const [answers, setAnswers] = useState<Record<number, Status>>({});
   const [issues, setIssues] = useState<Record<number, Issue>>({});
-  const [operator, setOperator] = useState(samplePeople[0].name);
+  const [operator, setOperator] = useState(samplePeople.find((p) => p.active !== false)?.name ?? samplePeople[0].name);
+  const [currentShift, setCurrentShift] = useState<"Diurno" | "Noturno">("Diurno");
+  const [currentTeam, setCurrentTeam] = useState<Team>("Alfa");
   const [sector, setSector] = useState<string>("TPS 2 (Terminal 2)");
   const [finalMessage, setFinalMessage] = useState("");
   const [showPersonModal, setShowPersonModal] = useState(false);
@@ -229,8 +275,19 @@ export default function Home() {
     } catch {}
   };
 
-  const handleLoginFirefighter = (selectedName: string, selectedSector?: string) => {
+  const handleLoginFirefighter = (
+    selectedName: string,
+    selectedSector?: string,
+    selectedShift?: "Diurno" | "Noturno",
+    selectedTeam?: Team
+  ) => {
     setOperator(selectedName);
+    const targetPerson = people.find((p) => p.name === selectedName);
+    const finalShift = selectedShift || targetPerson?.shift || "Diurno";
+    const finalTeam = (selectedTeam || targetPerson?.tps_team || targetPerson?.team || "Alfa") as Team;
+    setCurrentShift(finalShift);
+    setCurrentTeam(finalTeam);
+
     if (selectedSector) {
       setSector(selectedSector);
       try {
@@ -243,6 +300,8 @@ export default function Home() {
     try {
       localStorage.setItem("bombeiros_session_role", "firefighter");
       localStorage.setItem("bombeiros_session_operator", selectedName);
+      localStorage.setItem("bombeiros_session_shift", finalShift);
+      localStorage.setItem("bombeiros_session_team", finalTeam);
       localStorage.setItem("bombeiros_session_view", "checklist");
     } catch {}
   };
@@ -262,17 +321,49 @@ export default function Home() {
     try {
       localStorage.removeItem("bombeiros_session_role");
       localStorage.removeItem("bombeiros_session_operator");
+      localStorage.removeItem("bombeiros_session_shift");
+      localStorage.removeItem("bombeiros_session_team");
       localStorage.removeItem("bombeiros_session_view");
     } catch {}
   };
 
   const handleOperatorChange = (newOperator: string) => {
     setOperator(newOperator);
+    const targetPerson = people.find((p) => p.name === newOperator);
+    if (targetPerson) {
+      if (targetPerson.shift) {
+        setCurrentShift(targetPerson.shift);
+        try {
+          localStorage.setItem("bombeiros_session_shift", targetPerson.shift);
+        } catch {}
+      }
+      const targetTeam = (targetPerson.tps_team || targetPerson.team || "Alfa") as Team;
+      if (["Alfa", "Bravo", "Charlie", "Delta"].includes(targetTeam)) {
+        setCurrentTeam(targetTeam);
+        try {
+          localStorage.setItem("bombeiros_session_team", targetTeam);
+        } catch {}
+      }
+    }
     if (role === "firefighter") {
       try {
         localStorage.setItem("bombeiros_session_operator", newOperator);
       } catch {}
     }
+  };
+
+  const handleShiftChange = (newShift: "Diurno" | "Noturno") => {
+    setCurrentShift(newShift);
+    try {
+      localStorage.setItem("bombeiros_session_shift", newShift);
+    } catch {}
+  };
+
+  const handleTeamChange = (newTeam: Team) => {
+    setCurrentTeam(newTeam);
+    try {
+      localStorage.setItem("bombeiros_session_team", newTeam);
+    } catch {}
   };
 
   const fetchAllOperationalRounds = async () => {
@@ -352,7 +443,8 @@ export default function Home() {
         setPeople(result.people);
         setOperator((curr) => {
           const saved = typeof window !== "undefined" ? localStorage.getItem("bombeiros_session_operator") : null;
-          return saved || curr || result.people![0].name;
+          const activePeople = result.people!.filter((p) => p.active !== false);
+          return saved || curr || activePeople[0]?.name || result.people![0].name;
         });
       }
       if (result.rounds) setRounds(result.rounds);
@@ -386,6 +478,14 @@ export default function Home() {
         setView("checklist");
         if (savedOperator) {
           setOperator(savedOperator);
+        }
+        const savedShift = localStorage.getItem("bombeiros_session_shift") as "Diurno" | "Noturno" | null;
+        if (savedShift === "Diurno" || savedShift === "Noturno") {
+          setCurrentShift(savedShift);
+        }
+        const savedTeam = localStorage.getItem("bombeiros_session_team") as Team | null;
+        if (savedTeam && ["Alfa", "Bravo", "Charlie", "Delta"].includes(savedTeam)) {
+          setCurrentTeam(savedTeam);
         }
       }
       const savedSector = localStorage.getItem("bombeiros_session_sector");
@@ -430,9 +530,14 @@ export default function Home() {
     };
   }, []);
 
-  const completed = Object.keys(answers).length;
-  const nonConformities = Object.values(answers).filter((value) => value === "Não conforme").length;
-  const conformCount = Object.values(answers).filter((value) => value === "Conforme").length;
+  const currentChecklistItems = useMemo(() => getChecklistItemsForSector(sector), [sector]);
+  const activeAnswerKeys = useMemo(
+    () => Object.keys(answers).filter((k) => Number(k) < currentChecklistItems.length),
+    [answers, currentChecklistItems]
+  );
+  const completed = activeAnswerKeys.length;
+  const nonConformities = activeAnswerKeys.filter((k) => answers[Number(k)] === "Não conforme").length;
+  const conformCount = activeAnswerKeys.filter((k) => answers[Number(k)] === "Conforme").length;
   const evaluatedCount = conformCount + nonConformities; // Exclui N/A: conformes vs ocorrências
   const conformity = useMemo(() => {
     if (evaluatedCount === 0) return completed > 0 ? 100 : 0;
@@ -530,8 +635,8 @@ export default function Home() {
         protocol,
         firefighter_id: firefighter.id ?? null,
         firefighter_name: firefighter.name,
-        shift: firefighter.shift,
-        tps_team: sector,
+        shift: currentShift || firefighter.shift,
+        tps_team: currentTeam || firefighter.tps_team || sector,
         teca_team: sector.toLowerCase().includes("teca") ? sector : firefighter.teca_team,
         hangar_united_team: sector.toLowerCase().includes("hangar") ? sector : firefighter.hangar_united_team,
         sector,
@@ -543,7 +648,7 @@ export default function Home() {
       };
 
       const rows: RoundAnswer[] = await Promise.all(
-        checklistItems.map(async (item, index) => {
+        currentChecklistItems.map(async (item, index) => {
           const issue = issues[index];
           let photo_path: string | null = null;
           if (answers[index] === "Não conforme" && issue?.photo) {
@@ -596,8 +701,8 @@ export default function Home() {
       protocol,
       firefighter_id: firefighter.id ?? null,
       firefighter_name: firefighter.name,
-      shift: firefighter.shift,
-      tps_team: sector,
+      shift: currentShift || firefighter.shift,
+      tps_team: currentTeam || firefighter.tps_team || "Alfa",
       teca_team: sector.toLowerCase().includes("teca") ? sector : firefighter.teca_team,
       hangar_united_team: sector.toLowerCase().includes("hangar") ? sector : firefighter.hangar_united_team,
       conformity,
@@ -613,7 +718,7 @@ export default function Home() {
     }
 
     try {
-      const rows = await Promise.all(checklistItems.map(async (item, index) => {
+      const rows = await Promise.all(currentChecklistItems.map(async (item, index) => {
         const issue = issues[index];
         let photo_path: string | null = null;
         if (answers[index] === "Não conforme" && issue?.photo) {
@@ -676,7 +781,7 @@ export default function Home() {
             body: JSON.stringify({
               protocol,
               firefighterName: firefighter.name,
-              shift: firefighter.shift,
+              shift: currentShift || firefighter.shift,
               sector,
               nonConformities,
               items: nonConformItems,
@@ -933,6 +1038,10 @@ export default function Home() {
             operator={operator}
             setOperator={handleOperatorChange}
             firefighter={firefighter}
+            currentShift={currentShift}
+            setCurrentShift={handleShiftChange}
+            currentTeam={currentTeam}
+            setCurrentTeam={handleTeamChange}
             sector={sector}
             setSector={setSector}
             answers={answers}
@@ -1407,10 +1516,13 @@ function FirefighterIdentifyModal({
   people: Firefighter[];
   initialSector?: string;
   onClose: () => void;
-  onConfirm: (selectedName: string, selectedSector: string) => void;
+  onConfirm: (selectedName: string, selectedSector: string, selectedShift: "Diurno" | "Noturno", selectedTeam: Team) => void;
 }) {
   const activePeople = useMemo(() => people.filter((p) => p.active !== false), [people]);
   const [selectedName, setSelectedName] = useState(activePeople[0]?.name ?? "");
+  const firefighter = activePeople.find((p) => p.name === selectedName) ?? activePeople[0];
+  const [selectedShift, setSelectedShift] = useState<"Diurno" | "Noturno">(() => firefighter?.shift ?? "Diurno");
+  const [selectedTeam, setSelectedTeam] = useState<Team>(() => ((firefighter?.tps_team || firefighter?.team || "Alfa") as Team));
   const [sectorOption, setSectorOption] = useState(() => {
     const presets = [
       "TPS 2 (Terminal 2)",
@@ -1424,13 +1536,20 @@ function FirefighterIdentifyModal({
   });
   const [customSectorText, setCustomSectorText] = useState(initialSector || "TPS 2 (Terminal 2)");
 
-  const firefighter = activePeople.find((p) => p.name === selectedName) ?? activePeople[0];
+  const handleSelectName = (name: string) => {
+    setSelectedName(name);
+    const found = activePeople.find((p) => p.name === name);
+    if (found) {
+      setSelectedShift(found.shift);
+      setSelectedTeam((found.tps_team || found.team || "Alfa") as Team);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedName) {
       const finalSector = (sectorOption === "Outro" ? customSectorText : sectorOption) || "Área Operacional";
-      onConfirm(selectedName, finalSector.trim());
+      onConfirm(selectedName, finalSector.trim(), selectedShift, selectedTeam);
     }
   };
 
@@ -1454,7 +1573,7 @@ function FirefighterIdentifyModal({
           <>
             <label>
               BOMBEIRO RESPONSÁVEL
-              <select value={selectedName} onChange={(e) => setSelectedName(e.target.value)}>
+              <select value={selectedName} onChange={(e) => handleSelectName(e.target.value)}>
                 {activePeople.map((p) => (
                   <option key={p.id ?? p.name} value={p.name}>
                     {p.name} ({p.shift})
@@ -1466,12 +1585,26 @@ function FirefighterIdentifyModal({
             {firefighter && (
               <div className="identity" style={{ marginTop: "12px" }}>
                 <label>
-                  TURNO
-                  <input readOnly value={firefighter.shift} />
+                  TURNO DE SERVIÇO
+                  <select
+                    value={selectedShift}
+                    onChange={(e) => setSelectedShift(e.target.value as "Diurno" | "Noturno")}
+                  >
+                    <option value="Diurno">Diurno</option>
+                    <option value="Noturno">Noturno</option>
+                  </select>
                 </label>
                 <label>
-                  EQUIPE
-                  <input readOnly value={`Equipe ${firefighter.tps_team || firefighter.team || "Alfa"}`} />
+                  EQUIPE / TURMA
+                  <select
+                    value={selectedTeam}
+                    onChange={(e) => setSelectedTeam(e.target.value as Team)}
+                  >
+                    <option value="Alfa">Equipe Alfa</option>
+                    <option value="Bravo">Equipe Bravo</option>
+                    <option value="Charlie">Equipe Charlie</option>
+                    <option value="Delta">Equipe Delta</option>
+                  </select>
                 </label>
                 <label style={{ gridColumn: "span 2" }}>
                   SETOR / LOCAL DA RONDA (ONDE VOCÊ ESTÁ NO MOMENTO)
@@ -1857,8 +1990,10 @@ function RoundDetailsModal({
         return;
       }
 
-      // Demo / Fallback mode: Map all 20 checklist items with simulated answers
-      const demoAnswers: RoundAnswer[] = checklistItems.map((itemText, index) => {
+      // Demo / Fallback mode: Map all checklist items with simulated answers
+      const roundSector = getRoundSector(round);
+      const itemsForThisRound = getChecklistItemsForSector(roundSector);
+      const demoAnswers: RoundAnswer[] = itemsForThisRound.map((itemText, index) => {
         const itemNumber = index + 1;
         const isNonConform = round.non_conformities > 0 && index < round.non_conformities;
         const isNA = index === 11 && round.non_conformities === 0;
@@ -1911,6 +2046,17 @@ function RoundDetailsModal({
     return chunks;
   }, [filteredAnswers, filteredChunkSize]);
 
+  const allChunks = useMemo(() => {
+    if (answers.length <= 10) {
+      return [answers];
+    }
+    const chunks: RoundAnswer[][] = [];
+    for (let i = 0; i < answers.length; i += 10) {
+      chunks.push(answers.slice(i, i + 10));
+    }
+    return chunks;
+  }, [answers]);
+
   const totalConform = answers.filter((a) => a.status === "Conforme").length;
   const totalNonConform = answers.filter((a) => a.status === "Não conforme").length;
   const totalNA = answers.filter((a) => a.status === "N/A").length;
@@ -1951,7 +2097,7 @@ function RoundDetailsModal({
               style={{ padding: "6px 14px", fontSize: "11px" }}
               onClick={() => setActiveTab("all")}
             >
-              Todas as 20 Respostas ({answers.length})
+              Todas as Respostas ({answers.length})
             </button>
             <button
               type="button"
@@ -1979,141 +2125,122 @@ function RoundDetailsModal({
         {/* Folha Completa da Ronda para Download e Impressão (Organizada em Páginas A4) */}
         <div id="printable-round-details" style={{ width: "100%" }}>
           {activeTab === "all" ? (
-            <>
-              {/* PÁGINA 1: ITENS 1 A 10 */}
-              <div className="pdf-page">
-                <div className="pdf-page-content">
-                  <div className="modal-header-banner">
-                    <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" className="modal-logo-img" />
-                    <p className="eyebrow">AUDITORIA DA RONDA</p>
-                    <h2>{round.protocol}</h2>
-                  </div>
+            allChunks.map((chunk, pageIndex) => {
+              const isFirstPage = pageIndex === 0;
+              const isLastPage = pageIndex === allChunks.length - 1;
+              const pageNumber = pageIndex + 1;
+              const totalPages = allChunks.length;
+              const startItem = pageIndex * 10 + 1;
+              const endItem = pageIndex * 10 + chunk.length;
 
-                  {/* Metadata Banner Responsivo */}
-                  <div className="round-meta-grid" style={{ marginBottom: "14px" }}>
-                    <div>
-                      <label>BOMBEIRO RESPONSÁVEL</label>
-                      <strong>{round.firefighter_name}</strong>
-                    </div>
-                    <div>
-                      <label>TURNO</label>
-                      <strong>{round.shift}</strong>
-                    </div>
-                    <div>
-                      <label>SETOR DA RONDA</label>
-                      <strong style={{ fontSize: "11px" }}>
-                        {getRoundSector(round)}
-                      </strong>
-                    </div>
-                    <div>
-                      <label>DATA DE REGISTRO</label>
-                      <strong>{dateLabel(round.created_at)}</strong>
-                    </div>
-                  </div>
-
-                  {/* Quick Round Metrics Responsivo */}
-                  <div className="round-metrics-grid" style={{ marginBottom: "16px" }}>
-                    <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "var(--red)" }}>
-                      <p style={{ margin: 0, fontSize: "9px" }}>CONFORMIDADE GERAL</p>
-                      <b style={{ fontSize: "20px", color: cleanConformity === 100 ? "var(--green)" : "var(--red)" }}>
-                        {cleanConformity}%
-                      </b>
-                    </div>
-                    <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "#159365" }}>
-                      <p style={{ margin: 0, fontSize: "9px" }}>ITENS CONFORMES</p>
-                      <b style={{ fontSize: "20px", color: "var(--green)" }}>{totalConform} / 20</b>
-                    </div>
-                    <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "var(--red)" }}>
-                      <p style={{ margin: 0, fontSize: "9px" }}>NÃO CONFORMIDADES</p>
-                      <b style={{ fontSize: "20px", color: totalNonConform ? "var(--red)" : "#666" }}>{totalNonConform}</b>
-                    </div>
-                    <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "#c8a66a" }}>
-                      <p style={{ margin: 0, fontSize: "9px" }}>NÃO APLICÁVEL (N/A)</p>
-                      <b style={{ fontSize: "20px", color: "#b38228" }}>{totalNA}</b>
-                    </div>
-                  </div>
-
-                  <div className="pdf-section-title">
-                    <span>ITENS DE AUDITORIA OPERACIONAL (PARTE 1 — ITENS 1 A 10)</span>
-                    <span style={{ fontSize: "11px", fontWeight: "normal", color: "#666" }}>
-                      Status da Ronda: {round.status}
-                    </span>
-                  </div>
-
-                  <div className="answers-audit-list" style={{ gap: "7px", marginTop: "8px" }}>
-                    {answers.slice(0, 10).map((ans) => {
-                      const isBad = ans.status === "Não conforme";
-                      const isOk = ans.status === "Conforme";
-
-                      return (
-                        <div className="audit-item-row" key={ans.item_number} style={{ padding: "7px 12px", borderColor: isBad ? "#f5baba" : "#e7e7e2" }}>
-                          <div className="audit-item-header">
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <span style={{ fontWeight: "bold", width: "24px", color: isBad ? "var(--red)" : "#888" }}>
-                                #{ans.item_number}
-                              </span>
-                              <strong style={{ fontSize: "11px", color: "#111" }}>{ans.item_text}</strong>
-                            </div>
-                            <Tag tone={isOk ? "good" : isBad ? "danger" : "warn"}>{ans.status}</Tag>
-                          </div>
-                          {isBad && <AuditIssueDetail ans={ans} onPreviewPhoto={setPreviewPhoto} />}
+              return (
+                <div className="pdf-page" key={`all-page-${pageNumber}`}>
+                  <div className="pdf-page-content">
+                    {isFirstPage ? (
+                      <>
+                        <div className="modal-header-banner">
+                          <img src="/LOGO-ENSEG-branco.png" alt="ENSEG" className="modal-logo-img" />
+                          <p className="eyebrow">AUDITORIA DA RONDA</p>
+                          <h2>{round.protocol}</h2>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
 
-                <div className="pdf-page-footer">
-                  <span>ENSEG Vistoria Operacional Individual · SBGL Galeão · Protocolo {round.protocol}</span>
-                  <span>Página 1 de 2</span>
-                </div>
-              </div>
-
-              {/* PÁGINA 2: ITENS 11 A 20 + ASSINATURAS */}
-              <div className="pdf-page">
-                <div className="pdf-page-content">
-                  <div className="pdf-page-header-compact">
-                    <span><strong>ENSEG</strong> · Vistoria Operacional (Continuação)</span>
-                    <span>Ronda: <strong>{round.protocol}</strong> · {round.firefighter_name}</span>
-                  </div>
-
-                  <div className="pdf-section-title">
-                    <span>ITENS DE AUDITORIA OPERACIONAL (PARTE 2 — ITENS 11 A 20)</span>
-                    <span>10 itens avaliados</span>
-                  </div>
-
-                  <div className="answers-audit-list" style={{ gap: "7px", marginTop: "8px" }}>
-                    {answers.slice(10, 20).map((ans) => {
-                      const isBad = ans.status === "Não conforme";
-                      const isOk = ans.status === "Conforme";
-
-                      return (
-                        <div className="audit-item-row" key={ans.item_number} style={{ padding: "7px 12px", borderColor: isBad ? "#f5baba" : "#e7e7e2" }}>
-                          <div className="audit-item-header">
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <span style={{ fontWeight: "bold", width: "24px", color: isBad ? "var(--red)" : "#888" }}>
-                                #{ans.item_number}
-                              </span>
-                              <strong style={{ fontSize: "11px", color: "#111" }}>{ans.item_text}</strong>
-                            </div>
-                            <Tag tone={isOk ? "good" : isBad ? "danger" : "warn"}>{ans.status}</Tag>
+                        {/* Metadata Banner Responsivo */}
+                        <div className="round-meta-grid" style={{ marginBottom: "14px" }}>
+                          <div>
+                            <label>BOMBEIRO RESPONSÁVEL</label>
+                            <strong>{round.firefighter_name}</strong>
                           </div>
-                          {isBad && <AuditIssueDetail ans={ans} onPreviewPhoto={setPreviewPhoto} />}
+                          <div>
+                            <label>TURNO</label>
+                            <strong>{round.shift}</strong>
+                          </div>
+                          <div>
+                            <label>SETOR DA RONDA</label>
+                            <strong style={{ fontSize: "11px" }}>
+                              {getRoundSector(round)}
+                            </strong>
+                          </div>
+                          <div>
+                            <label>DATA DE REGISTRO</label>
+                            <strong>{dateLabel(round.created_at)}</strong>
+                          </div>
                         </div>
-                      );
-                    })}
+
+                        {/* Quick Round Metrics Responsivo */}
+                        <div className="round-metrics-grid" style={{ marginBottom: "16px" }}>
+                          <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "var(--red)" }}>
+                            <p style={{ margin: 0, fontSize: "9px" }}>CONFORMIDADE GERAL</p>
+                            <b style={{ fontSize: "20px", color: cleanConformity === 100 ? "var(--green)" : "var(--red)" }}>
+                              {cleanConformity}%
+                            </b>
+                          </div>
+                          <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "#159365" }}>
+                            <p style={{ margin: 0, fontSize: "9px" }}>ITENS CONFORMES</p>
+                            <b style={{ fontSize: "20px", color: "var(--green)" }}>{totalConform} / {answers.length || 20}</b>
+                          </div>
+                          <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "var(--red)" }}>
+                            <p style={{ margin: 0, fontSize: "9px" }}>NÃO CONFORMIDADES</p>
+                            <b style={{ fontSize: "20px", color: totalNonConform ? "var(--red)" : "#666" }}>{totalNonConform}</b>
+                          </div>
+                          <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "#c8a66a" }}>
+                            <p style={{ margin: 0, fontSize: "9px" }}>NÃO APLICÁVEL (N/A)</p>
+                            <b style={{ fontSize: "20px", color: "#b38228" }}>{totalNA}</b>
+                          </div>
+                        </div>
+
+                        <div className="pdf-section-title">
+                          <span>ITENS DE AUDITORIA OPERACIONAL (PARTE 1 — ITENS {startItem} A {endItem})</span>
+                          <span style={{ fontSize: "11px", fontWeight: "normal", color: "#666" }}>
+                            Status da Ronda: {round.status}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="pdf-page-header-compact">
+                          <span><strong>ENSEG</strong> · Vistoria Operacional (Continuação)</span>
+                          <span>Ronda: <strong>{round.protocol}</strong> · {round.firefighter_name}</span>
+                        </div>
+
+                        <div className="pdf-section-title">
+                          <span>ITENS DE AUDITORIA OPERACIONAL (PARTE {pageNumber} — ITENS {startItem} A {endItem})</span>
+                          <span>{chunk.length} itens avaliados</span>
+                        </div>
+                      </>
+                    )}
+
+                    <div className="answers-audit-list" style={{ gap: "7px", marginTop: "8px" }}>
+                      {chunk.map((ans) => {
+                        const isBad = ans.status === "Não conforme";
+                        const isOk = ans.status === "Conforme";
+
+                        return (
+                          <div className="audit-item-row" key={ans.item_number} style={{ padding: "7px 12px", borderColor: isBad ? "#f5baba" : "#e7e7e2" }}>
+                            <div className="audit-item-header">
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <span style={{ fontWeight: "bold", width: "24px", color: isBad ? "var(--red)" : "#888" }}>
+                                  #{ans.item_number}
+                                </span>
+                                <strong style={{ fontSize: "11px", color: "#111" }}>{ans.item_text}</strong>
+                              </div>
+                              <Tag tone={isOk ? "good" : isBad ? "danger" : "warn"}>{ans.status}</Tag>
+                            </div>
+                            {isBad && <AuditIssueDetail ans={ans} onPreviewPhoto={setPreviewPhoto} />}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {isLastPage && <PdfSignatures />}
                   </div>
 
-                  {/* Assinaturas Oficiais */}
-                  <PdfSignatures />
+                  <div className="pdf-page-footer">
+                    <span>ENSEG Vistoria Operacional Individual · SBGL Galeão · Protocolo {round.protocol}</span>
+                    <span>Página {pageNumber} de {totalPages}</span>
+                  </div>
                 </div>
-
-                <div className="pdf-page-footer">
-                  <span>ENSEG Vistoria Operacional Individual · SBGL Galeão · Protocolo {round.protocol}</span>
-                  <span>Página 2 de 2</span>
-                </div>
-              </div>
-            </>
+              );
+            })
           ) : (
             /* MODO FILTRADO (OCORRÊNCIAS OU ITENS OK) — PAGINADO CONFORME A QUANTIDADE DE ITENS */
             filteredChunks.map((chunk, fIndex) => {
@@ -2163,7 +2290,7 @@ function RoundDetailsModal({
                           </div>
                           <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "#159365" }}>
                             <p style={{ margin: 0, fontSize: "9px" }}>ITENS CONFORMES</p>
-                            <b style={{ fontSize: "20px", color: "var(--green)" }}>{totalConform} / 20</b>
+                            <b style={{ fontSize: "20px", color: "var(--green)" }}>{totalConform} / {answers.length || 20}</b>
                           </div>
                           <div className="metric" style={{ padding: "10px", minHeight: "auto", borderTopColor: "var(--red)" }}>
                             <p style={{ margin: 0, fontSize: "9px" }}>NÃO CONFORMIDADES</p>
@@ -3356,7 +3483,7 @@ function Reports({
                       else setSelectedRound(round);
                     }}
                   >
-                    🔎 Ver 20 Respostas
+                    🔎 Ver Respostas
                   </button>
                 </div>
               </div>
@@ -3610,6 +3737,10 @@ function Checklist({
   operator,
   setOperator,
   firefighter,
+  currentShift,
+  setCurrentShift,
+  currentTeam,
+  setCurrentTeam,
   sector,
   setSector,
   answers,
@@ -3629,6 +3760,10 @@ function Checklist({
   operator: string;
   setOperator: (value: string) => void;
   firefighter?: Firefighter;
+  currentShift: "Diurno" | "Noturno";
+  setCurrentShift: (shift: "Diurno" | "Noturno") => void;
+  currentTeam: Team;
+  setCurrentTeam: (team: Team) => void;
   sector: string;
   setSector: (value: string) => void;
   answers: Record<number, Status>;
@@ -3645,6 +3780,8 @@ function Checklist({
   onSubmit: () => void;
 }) {
   const activePeople = useMemo(() => people.filter((p) => p.active !== false), [people]);
+  const currentItems = useMemo(() => getChecklistItemsForSector(sector), [sector]);
+  const totalItems = currentItems.length;
 
   const predefinedSectors = [
     "TPS 2 (Terminal 2)",
@@ -3668,7 +3805,9 @@ function Checklist({
           <div>
             <p className="eyebrow">RONDA OPERACIONAL</p>
             <h2>Checklist de Inspeção</h2>
-            <p className="muted">20 itens de verificação em campo.</p>
+            <p className="muted">
+              {totalItems} itens de verificação em campo {isUnitedSector(sector) ? "(inclui itens específicos Hangar United)" : ""}.
+            </p>
           </div>
           <Tag tone="warn">Em andamento</Tag>
         </section>
@@ -3677,13 +3816,31 @@ function Checklist({
             BOMBEIRO RESPONSÁVEL
             <select value={operator} onChange={(event) => setOperator(event.target.value)}>
               {activePeople.map((person) => (
-                <option key={person.id ?? person.name}>{person.name}</option>
+                <option key={person.id ?? person.name} value={person.name}>{person.name}</option>
               ))}
             </select>
           </label>
           <label>
-            TURNO
-            <input readOnly value={firefighter?.shift ?? ""} />
+            TURNO DE SERVIÇO
+            <select
+              value={currentShift}
+              onChange={(e) => setCurrentShift(e.target.value as "Diurno" | "Noturno")}
+            >
+              <option value="Diurno">Diurno</option>
+              <option value="Noturno">Noturno</option>
+            </select>
+          </label>
+          <label>
+            EQUIPE / TURMA
+            <select
+              value={currentTeam}
+              onChange={(e) => setCurrentTeam(e.target.value as Team)}
+            >
+              <option value="Alfa">Equipe Alfa</option>
+              <option value="Bravo">Equipe Bravo</option>
+              <option value="Charlie">Equipe Charlie</option>
+              <option value="Delta">Equipe Delta</option>
+            </select>
           </label>
           <label style={{ gridColumn: "span 2" }}>
             SETOR / LOCAL DA RONDA (ONDE VOCÊ ESTÁ EM CAMPO)
@@ -3718,110 +3875,133 @@ function Checklist({
             <span>ITEM DE INSPEÇÃO</span>
             <span>AVALIAÇÃO</span>
           </div>
-          {checklistItems.map((item, index) => (
-            <div className="check-row" key={item}>
-              <div>
-                <b>{String(index + 1).padStart(2, "0")}</b>
-                <span>{item}</span>
-              </div>
-              <div className="choice-set">
-                {(["Conforme", "Não conforme", "N/A"] as Status[]).map((status) => {
-                  const statusClass = status === "Conforme" ? "conforme" : status === "Não conforme" ? "nao-conforme" : "na";
-                  return (
-                    <button
-                      type="button"
-                      key={status}
-                      onClick={() => setAnswers((current) => ({ ...current, [index]: status }))}
-                      className={`choice ${answers[index] === status ? statusClass : ""}`}
-                    >
-                      {status === "Conforme" ? "✓" : status === "Não conforme" ? "!" : "—"}
-                      <small>{status}</small>
-                    </button>
-                  );
-                })}
-              </div>
-              {answers[index] === "Não conforme" && (
-                <div className="detailed-issue">
-                  <strong>Detalhamento da não conformidade</strong>
-                  <input
-                    value={issues[index]?.location ?? ""}
-                    onChange={(event) => updateIssue(index, { location: event.target.value })}
-                    placeholder="Local (ex.: rampa de acesso do 2º andar)"
-                  />
-                  <textarea
-                    value={issues[index]?.observation ?? ""}
-                    onChange={(event) => updateIssue(index, { observation: event.target.value })}
-                    placeholder="Descrição da não conformidade"
-                  />
-                  <input
-                    value={issues[index]?.action_taken ?? ""}
-                    onChange={(event) => updateIssue(index, { action_taken: event.target.value })}
-                    placeholder="Providência adotada pelo bombeiro"
-                  />
-                  <input
-                    value={issues[index]?.supervisor_notified ?? ""}
-                    onChange={(event) => updateIssue(index, { supervisor_notified: event.target.value })}
-                    placeholder="Supervisor comunicado / horário"
-                  />
-                  <div>
-                    <label style={{ fontSize: "11px", fontWeight: "bold", color: "#8a1616", display: "block", marginBottom: "4px" }}>
-                      Número da Solicitação de Serviço (SS):
-                    </label>
-                    <input
-                      value={issues[index]?.ss_number ?? ""}
-                      onChange={(event) => updateIssue(index, { ss_number: event.target.value })}
-                      placeholder="Ex.: SS-2026-00123"
-                    />
-                  </div>
-                  <div>
-                    <label className="photo-input" style={{ display: "block", marginBottom: "4px" }}>
-                      Registro fotográfico / Anexo em imagem (Timestamp)
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        onChange={(event) => updateIssue(index, { photo: event.target.files?.[0] ?? null })}
-                      />
-                    </label>
-                    {issues[index]?.photo && (
-                      <div
+          {currentItems.map((item, index) => {
+            const isUnitedSpecific = index >= 20;
+            return (
+              <div className="check-row" key={`${index}-${item}`}>
+                <div>
+                  <b>{String(index + 1).padStart(2, "0")}</b>
+                  <span>
+                    {item}
+                    {isUnitedSpecific && (
+                      <span
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "10px",
-                          marginTop: "8px",
-                          padding: "8px 12px",
-                          background: "#ffffff",
-                          border: "1px solid #d8b8b8",
-                          borderRadius: "6px"
+                          marginLeft: "8px",
+                          display: "inline-block",
+                          fontSize: "10px",
+                          fontWeight: "bold",
+                          padding: "2px 6px",
+                          background: "#e8f0fe",
+                          color: "#1a73e8",
+                          borderRadius: "4px",
+                          border: "1px solid #c2e7ff",
+                          verticalAlign: "middle"
                         }}
                       >
-                        <img
-                          src={URL.createObjectURL(issues[index].photo!)}
-                          alt="Pré-visualização do anexo"
-                          style={{ width: "52px", height: "52px", objectFit: "cover", borderRadius: "4px", border: "1px solid #ddd" }}
-                        />
-                        <div style={{ flex: 1, fontSize: "11px" }}>
-                          <strong style={{ color: "#148358", display: "block" }}>✓ Foto anexada com sucesso</strong>
-                          <span style={{ color: "#555" }}>
-                            {issues[index].photo!.name} ({(issues[index].photo!.size / 1024).toFixed(0)} KB)
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          className="outline"
-                          style={{ padding: "4px 8px", fontSize: "11px", color: "var(--red)", borderColor: "var(--red)" }}
-                          onClick={() => updateIssue(index, { photo: null })}
-                        >
-                          ✕ Remover
-                        </button>
-                      </div>
+                        Exclusivo United
+                      </span>
                     )}
-                  </div>
+                  </span>
                 </div>
-              )}
-            </div>
-          ))}
+                <div className="choice-set">
+                  {(["Conforme", "Não conforme", "N/A"] as Status[]).map((status) => {
+                    const statusClass = status === "Conforme" ? "conforme" : status === "Não conforme" ? "nao-conforme" : "na";
+                    return (
+                      <button
+                        type="button"
+                        key={status}
+                        onClick={() => setAnswers((current) => ({ ...current, [index]: status }))}
+                        className={`choice ${answers[index] === status ? statusClass : ""}`}
+                      >
+                        {status === "Conforme" ? "✓" : status === "Não conforme" ? "!" : "—"}
+                        <small>{status}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+                {answers[index] === "Não conforme" && (
+                  <div className="detailed-issue">
+                    <strong>Detalhamento da não conformidade</strong>
+                    <input
+                      value={issues[index]?.location ?? ""}
+                      onChange={(event) => updateIssue(index, { location: event.target.value })}
+                      placeholder="Local (ex.: rampa de acesso do 2º andar)"
+                    />
+                    <textarea
+                      value={issues[index]?.observation ?? ""}
+                      onChange={(event) => updateIssue(index, { observation: event.target.value })}
+                      placeholder="Descrição da não conformidade"
+                    />
+                    <input
+                      value={issues[index]?.action_taken ?? ""}
+                      onChange={(event) => updateIssue(index, { action_taken: event.target.value })}
+                      placeholder="Providência adotada pelo bombeiro"
+                    />
+                    <input
+                      value={issues[index]?.supervisor_notified ?? ""}
+                      onChange={(event) => updateIssue(index, { supervisor_notified: event.target.value })}
+                      placeholder="Supervisor comunicado / horário"
+                    />
+                    <div>
+                      <label style={{ fontSize: "11px", fontWeight: "bold", color: "#8a1616", display: "block", marginBottom: "4px" }}>
+                        Número da Solicitação de Serviço (SS):
+                      </label>
+                      <input
+                        value={issues[index]?.ss_number ?? ""}
+                        onChange={(event) => updateIssue(index, { ss_number: event.target.value })}
+                        placeholder="Ex.: SS-2026-00123"
+                      />
+                    </div>
+                    <div>
+                      <label className="photo-input" style={{ display: "block", marginBottom: "4px" }}>
+                        Registro fotográfico / Anexo em imagem (Timestamp)
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={(event) => updateIssue(index, { photo: event.target.files?.[0] ?? null })}
+                        />
+                      </label>
+                      {issues[index]?.photo && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            marginTop: "8px",
+                            padding: "8px 12px",
+                            background: "#ffffff",
+                            border: "1px solid #d8b8b8",
+                            borderRadius: "6px"
+                          }}
+                        >
+                          <img
+                            src={URL.createObjectURL(issues[index].photo!)}
+                            alt="Pré-visualização do anexo"
+                            style={{ width: "52px", height: "52px", objectFit: "cover", borderRadius: "4px", border: "1px solid #ddd" }}
+                          />
+                          <div style={{ flex: 1, fontSize: "11px" }}>
+                            <strong style={{ color: "#148358", display: "block" }}>✓ Foto anexada com sucesso</strong>
+                            <span style={{ color: "#555" }}>
+                              {issues[index].photo!.name} ({(issues[index].photo!.size / 1024).toFixed(0)} KB)
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="outline"
+                            style={{ padding: "4px 8px", fontSize: "11px", color: "var(--red)", borderColor: "var(--red)" }}
+                            onClick={() => updateIssue(index, { photo: null })}
+                          >
+                            ✕ Remover
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </section>
         {nonConformities > 0 && (
           <section className="general-notes">
@@ -3842,12 +4022,12 @@ function Checklist({
         <div className="progress-circle">
           <b>
             {completed}
-            <small>/ 20</small>
+            <small>/ {totalItems}</small>
           </b>
           <span>itens avaliados</span>
         </div>
         <div className="progress-line">
-          <i style={{ width: `${(completed / 20) * 100}%` }} />
+          <i style={{ width: `${(completed / totalItems) * 100}%` }} />
         </div>
         <div className="summary">
           <p>
@@ -3861,12 +4041,14 @@ function Checklist({
         </div>
         <button
           className="primary full"
-          disabled={completed !== 20 || saving || !firefighter}
+          disabled={completed !== totalItems || saving || !firefighter}
           onClick={onSubmit}
         >
           {saving ? "Enviando…" : "Enviar ronda para validação"}
         </button>
-        {completed !== 20 && <small className="hint">Complete todos os 20 itens para liberar o envio.</small>}
+        {completed !== totalItems && (
+          <small className="hint">Complete todos os {totalItems} itens para liberar o envio.</small>
+        )}
         {submittedProtocol && (
           <div className="success">
             ✓ Ronda enviada com sucesso.
@@ -3880,19 +4062,19 @@ function Checklist({
       <div className="mobile-progress-bar">
         <div className="mobile-progress-info">
           <strong>
-            {completed}/20 Avaliados {completed === 20 ? "✓ Prontos" : ""}
+            {completed}/{totalItems} Avaliados {completed === totalItems ? "✓ Prontos" : ""}
           </strong>
           <span>
-            {completed === 20
+            {completed === totalItems
               ? nonConformities > 0
                 ? `${nonConformities} não conformidade(s)`
                 : "100% Conforme"
-              : `Faltam ${20 - completed} item(ns)`}
+              : `Faltam ${totalItems - completed} item(ns)`}
           </span>
         </div>
         <button
           className="primary"
-          disabled={completed !== 20 || saving || !firefighter}
+          disabled={completed !== totalItems || saving || !firefighter}
           onClick={onSubmit}
         >
           {saving ? "Enviando…" : "Enviar Ronda"}
